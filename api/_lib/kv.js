@@ -11,14 +11,10 @@ export function requireEditKey(req, res) {
 }
 
 export async function getProjects() {
-  try {
-    const { blobs } = await list({ prefix: BLOB_PATHNAME, token: process.env.BLOB_READ_WRITE_TOKEN });
-    if (!blobs.length) return [];
-    const res = await fetch(blobs[0].url);
-    return await res.json();
-  } catch {
-    return [];
-  }
+  const { blobs } = await list({ prefix: BLOB_PATHNAME, token: process.env.BLOB_READ_WRITE_TOKEN });
+  if (!blobs.length) return [];
+  const res = await fetch(blobs[0].url);
+  return await res.json();
 }
 
 export async function saveProjects(projects) {
