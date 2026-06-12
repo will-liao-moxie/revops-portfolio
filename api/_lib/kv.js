@@ -23,6 +23,7 @@ export async function saveProjects(projects) {
     contentType: "application/json",
     token: process.env.BLOB_READ_WRITE_TOKEN,
     allowOverwrite: true,
+    addRandomSuffix: false,
   });
 }
 

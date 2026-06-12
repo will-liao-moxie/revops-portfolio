@@ -3,11 +3,7 @@ import { requireEditKey, parseBody, getProjects, saveProjects } from "./_lib/kv.
 export default async function handler(req, res) {
   try {
     if (req.method === "GET") {
-      try {
-        return res.status(200).json(await getProjects());
-      } catch (e) {
-        return res.status(500).json({ error: e.message, stack: e.stack });
-      }
+      return res.status(200).json(await getProjects());
     }
 
     if (!requireEditKey(req, res)) return;
