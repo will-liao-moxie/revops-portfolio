@@ -1,6 +1,6 @@
-import { kv } from "@vercel/kv";
+import { put, head, getDownloadUrl } from "@vercel/blob";
 
-export const PROJECTS_KEY = "projects";
+const BLOB_PATHNAME = "projects.json";
 
 export function requireEditKey(req, res) {
   const key = process.env.EDIT_KEY;
@@ -11,11 +11,22 @@ export function requireEditKey(req, res) {
 }
 
 export async function getProjects() {
-  return (await kv.get(PROJECTS_KEY)) || [];
+  try {
+    const blob = await head(BLOB_PATHNAME, { token: process.env.BLOB_READ_WRITE_TOKEN });
+    const res = await fetch(blob.url);
+    return await res.json();
+  } catch {
+    return [];
+  }
 }
 
 export async function saveProjects(projects) {
-  await kv.set(PROJECTS_KEY, projects);
+  await put(BLOB_PATHNAME, JSON.stringify(projects), {
+    access: "public",
+    contentType: "application/json",
+    token: process.env.BLOB_READ_WRITE_TOKEN,
+    allowOverwrite: true,
+  });
 }
 
 export function parseBody(req) {
