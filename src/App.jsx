@@ -461,6 +461,12 @@ function Sequence({ projects, byId, onOpen }) {
 /* ---------- RESOURCING ---------- */
 function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSaveOrg, onOpen }) {
   const [managing, setManaging] = useState(false);
+  const exportRoster = () => {
+    const blob = new Blob([rosterToCsv(org)], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "revops-roster.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
   const resources = useMemo(() => allResources(org), [org]);
   const byGroup = {};
   (org || []).forEach((g) => { byGroup[g.name] = []; });
@@ -475,6 +481,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
           <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>The full team roster × projects. Each cell is the project's work units; the total is allocated load.</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.mono, fontSize: 11.5, color: T.inkSoft }}>
+          <button onClick={exportRoster} title="Download the team roster as CSV" style={btnGhost}>↓ Export roster</button>
           {unlocked && <button onClick={() => setManaging((m) => !m)} style={btnGhost}>{managing ? "Done" : "✎ Manage teams"}</button>}
           <span style={{ letterSpacing: "0.06em" }}>WORK UNITS</span>
           {EFFORTS.map((s) => <span key={s} style={{ padding: "2px 7px", borderRadius: 6, background: T.hairlineSoft, color: T.ink, fontWeight: 700 }}>{s}={EFFORT_POINTS[s]}</span>)}
@@ -856,6 +863,12 @@ function projectsToCsv(projects) {
     };
     lines.push(cols.map((c) => csvCell(cell[c.toLowerCase()])).join(","));
   });
+  return lines.join("\n");
+}
+function rosterToCsv(org) {
+  const cols = ["group", "team", "parent", "lead", "pm"];
+  const lines = [cols.join(",")];
+  allResources(org).forEach((r) => { lines.push([r.group, r.label, r.parent || "", r.lead || "", r.pm || ""].map(csvCell).join(",")); });
   return lines.join("\n");
 }
 
