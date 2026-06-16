@@ -21,6 +21,7 @@ async function writeJson(pathname, data) {
     token: process.env.BLOB_READ_WRITE_TOKEN,
     allowOverwrite: true,
     addRandomSuffix: false,
+    cacheControlMaxAge: 0, // don't let the blob CDN serve stale reads after a write
   });
 }
 
@@ -44,13 +45,7 @@ export async function getProjects() {
 }
 
 export async function saveProjects(projects) {
-  await put(BLOB_PATHNAME, JSON.stringify(projects), {
-    access: "public",
-    contentType: "application/json",
-    token: process.env.BLOB_READ_WRITE_TOKEN,
-    allowOverwrite: true,
-    addRandomSuffix: false,
-  });
+  await writeJson(BLOB_PATHNAME, projects);
 }
 
 export function parseBody(req) {
