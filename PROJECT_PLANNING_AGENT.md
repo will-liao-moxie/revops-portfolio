@@ -55,7 +55,7 @@ Each project is one row. Fields:
 | `solution` | The approach in plain language | **1–2 sentences.** Don't re-list the deliverables. |
 | `success` | Definition of done | Outcome-based. State a target only if the context gives a real one; otherwise describe the qualitative outcome. **Do not invent numbers.** |
 | `deliverables` | Concrete things being built | Outcome-level, not sub-tasks. Mark stretch items. |
-| `team` | **All** resources, internal **and** external, with their responsibility | One unified list — teams, individuals, and contractors together. No "engaged/TBD" status. |
+| `team` | **All** resources (internal + external), each with their responsibility **and their own effort on this project** | One unified list. Each entry is `name :: what :: effort` (effort XS–XL). The Resourcing view sums each team's per-project effort into its total allocation. |
 | `dependsOn` | Hard prerequisites | Reference existing projects **by code**. Only true blockers. |
 | `openItems` | Risks & assumptions | Genuine unknowns/assumptions. |
 
@@ -64,8 +64,10 @@ measure, and lifecycle status is not tracked.
 
 ### Effort legend (work units)
 `XS = 1`, `S = 2`, `M = 3`, `L = 4`, `XL = 5`. Effort is the load the project places on each team
-it touches; the board's Resourcing view sums it into per-team allocation, and it's the x-axis of
-the priority matrix. Calibrate against the export.
+it touches as a whole; it's the x-axis of the priority matrix. NOTE this is distinct from each
+team's **per-resource effort** inside the `team` list — the Resourcing view sums those per-team
+efforts into allocation. Set the project `effort` for prioritization and each team's effort for
+how much that specific team does.
 
 ### Resourcing roster (the source of truth for who can be staffed)
 The **Export roster** CSV (`group, team, parent, lead, pm`) lists every staffable team. **A team
@@ -98,8 +100,9 @@ context doesn't answer:
 3. **Deliverables** — concrete outcomes; mark committed vs. stretch.
 4. **Success** — how we'll know it worked. Capture a metric only if it exists; else qualitative.
 5. **Team (resourcing)** — name every team that will build it, drawn from the roster (use the
-   roster `team` name or its lead), each with its responsibility. This is what makes the project
-   show up in the Resourcing view. Sanity-check capacity: would any team be over-committed?
+   roster `team` name or its lead), each with its responsibility **and its own effort (XS–XL)** for
+   this project. This is what makes the project show up in the Resourcing view and drives each
+   team's allocation. Sanity-check capacity: would any team be over-committed?
 6. **DRI** — the one accountable person, or blank.
 7. **Dependencies** — does this need an existing project first? Reference by code; hard blockers only.
 8. **Effort, impact, target** — propose each with a one-line rationale; let the user adjust. Make sure `target` is consistent with dependencies (a project shouldn't target an earlier quarter than something it depends on).
@@ -124,7 +127,7 @@ Nothing else in the code block — the user pastes it straight into **CSV upload
 - **Quote** any cell containing a comma, quote, or newline (standard CSV; double internal quotes).
 - **List cells** separate items with ` | ` and sub-fields with ` :: `:
   - `deliverables`: `Build X | Wire the sync | *Stretch item`  (prefix `*` = stretch)
-  - `team`: `Business Systems :: Architects and builds | Data :: Pipelines | Empty Cup Digital :: HubSpot build`  (internal + external in one list)
+  - `team`: `Business Systems :: Architects and builds :: L | Data :: Pipelines :: S | HubSpot :: HubSpot build :: M`  (name :: what :: that team's effort XS–XL)
   - `dependsOn`: `SUP-01 :: extends its ClickUp foundation`  (reference an existing project **code**)
   - `openItems`: `Vendor API feasibility unvalidated | Segment field assumed populated`
 - Optional `code` column: include it to assign a specific code (e.g. `MS-05`); otherwise the
@@ -138,7 +141,7 @@ title,workstream,effort,impact,target,dri,stakeholder,problem,solution,success,d
 ### Worked example
 ```csv
 title,workstream,effort,impact,target,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
-"Provider Onboarding Status Portal","Supplies",M,4,"Q4 2026","Shannon Aubert","Supplies team","Providers and PSMs can't see where onboarding stands, so they ping the Supplies team constantly and pull OAs off setup work. It doesn't scale as provider volume grows.","Surface onboarding milestones in a self-serve view backed by the ClickUp lifecycle, with Intercom notifications at each step.","Providers and PSMs self-serve onboarding status; inbound status pings to the Supplies team drop noticeably.","Self-serve status view | Milestone notifications via Intercom | *Predictive ETA per stage","Business Systems :: Architects and builds the view | Supplies :: Defines milestones and copy | Empty Cup Digital :: HubSpot wiring | ClickUp Contractor :: Lifecycle workflow","SUP-01 :: extends its ClickUp + Intercom foundation","Milestone definitions not finalized"
+"Provider Onboarding Status Portal","Supplies",M,4,"Q4 2026","Shannon Aubert","Supplies team","Providers and PSMs can't see where onboarding stands, so they ping the Supplies team constantly and pull OAs off setup work. It doesn't scale as provider volume grows.","Surface onboarding milestones in a self-serve view backed by the ClickUp lifecycle, with Intercom notifications at each step.","Providers and PSMs self-serve onboarding status; inbound status pings to the Supplies team drop noticeably.","Self-serve status view | Milestone notifications via Intercom | *Predictive ETA per stage","Business Systems :: Architects and builds the view :: L | Supplies :: Defines milestones and copy :: S | HubSpot :: HubSpot wiring :: M | ClickUp :: Lifecycle workflow :: M","SUP-01 :: extends its ClickUp + Intercom foundation","Milestone definitions not finalized"
 ```
 
 ---

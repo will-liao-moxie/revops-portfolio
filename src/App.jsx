@@ -146,11 +146,14 @@ async function apiWrite(path, method, payload) {
 /* A team is allocated to a project purely when the project names that team
    (or its lead) in its Team & resourcing list. */
 function normName(s) { return (s || "").toLowerCase().trim().replace(/\s+/g, " ").replace(/ team$/, ""); }
-function resourceProjects(resource, projects) {
-  const names = new Set([normName(resource.label), normName(resource.lead)].filter(Boolean));
-  return projects.filter((p) => (p.roles || []).some((r) => names.has(normName(r.who))));
-}
+function resourceNames(resource) { return new Set([normName(resource.label), normName(resource.lead)].filter(Boolean)); }
+function rolesForResource(resource, p) { const names = resourceNames(resource); return (p.roles || []).filter((r) => names.has(normName(r.who))); }
+function resourceProjects(resource, projects) { return projects.filter((p) => rolesForResource(resource, p).length > 0); }
+function roleEffort(r) { return EFFORT_POINTS[r && r.effort] || EFFORT_POINTS.M; }
+function resourceUnitsOn(resource, p) { return rolesForResource(resource, p).reduce((s, r) => s + roleEffort(r), 0); }
 function projectLoad(p) { return EFFORT_POINTS[p.effort] || EFFORT_POINTS.M; }
+function resolveResource(org, who) { const n = normName(who); return allResources(org).find((r) => normName(r.label) === n || normName(r.lead) === n) || null; }
+function resourcePath(org, who) { const r = resolveResource(org, who); return r ? [r.group, r.label, r.lead].filter(Boolean).join(" · ") : who; }
 function allResources(org) {
   const out = [];
   (org || []).forEach((g) => {
@@ -314,7 +317,7 @@ export default function App() {
                 : <Resourcing projects={projects} org={org} capacities={capacities} unlocked={unlocked} onSetCapacity={setCapacity} onSaveOrg={saveOrg} onOpen={setSelectedId} />}
       </main>
 
-      {selected && <Detail p={selected} byId={byId} unlocked={unlocked} workstreams={allWorkstreams} onClose={() => setSelectedId(null)} onUpdate={(patch) => updateProject(selected.id, patch)} onRemove={() => removeProject(selected.id)} onOpen={setSelectedId} />}
+      {selected && <Detail p={selected} byId={byId} org={org} unlocked={unlocked} workstreams={allWorkstreams} onClose={() => setSelectedId(null)} onUpdate={(patch) => updateProject(selected.id, patch)} onRemove={() => removeProject(selected.id)} onOpen={setSelectedId} />}
       {showAdd && <AddModal onClose={() => setShowAdd(false)} onAdd={addProject} onBulkAdd={addProjects} existing={projects} workstreams={allWorkstreams} />}
     </div>
   );
@@ -470,8 +473,12 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
   const resources = useMemo(() => allResources(org), [org]);
   const byGroup = {};
   (org || []).forEach((g) => { byGroup[g.name] = []; });
-  resources.forEach((r) => { const ps = resourceProjects(r, projects); (byGroup[r.group] = byGroup[r.group] || []).push({ ...r, projects: ps, units: ps.reduce((s, p) => s + projectLoad(p), 0) }); });
-  const involved = (r, p) => r.projects.some((x) => x.id === p.id);
+  resources.forEach((r) => {
+    const ps = resourceProjects(r, projects);
+    const unitsBy = {}; ps.forEach((p) => { unitsBy[p.id] = resourceUnitsOn(r, p); });
+    (byGroup[r.group] = byGroup[r.group] || []).push({ ...r, unitsBy, units: ps.reduce((s, p) => s + unitsBy[p.id], 0) });
+  });
+  const involved = (r, p) => r.unitsBy[p.id] != null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -518,7 +525,7 @@ function ResourceGroup({ group, rows, projects, capacities, unlocked, onSetCapac
         return (
           <tr key={r.label} style={{ borderTop: `1px solid ${T.hairlineSoft}` }}>
             <td style={{ padding: "9px 14px", fontSize: 13 }}><span style={{ fontWeight: 600 }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</span>{r.lead && <span style={{ marginLeft: 8, fontSize: 11, color: T.inkSoft }}>{r.lead}{r.pm ? ` · PM ${r.pm}` : ""}</span>}</td>
-            {projects.map((p) => { const ws = wsMeta(p.workstream); return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px" }}>{involved(r, p) ? <span title={`${p.code} · ${projectLoad(p)} units`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, background: ws.soft, color: ws.color, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 }}>{projectLoad(p)}</span> : null}</td>; })}
+            {projects.map((p) => { const ws = wsMeta(p.workstream); return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px" }}>{involved(r, p) ? <span title={`${p.code} · ${r.unitsBy[p.id]} units`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, background: ws.soft, color: ws.color, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 }}>{r.unitsBy[p.id]}</span> : null}</td>; })}
             <td style={{ textAlign: "center", fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: over ? "#C0463E" : (r.units ? T.ink : T.hairline), borderLeft: `1px solid ${T.hairline}` }}>{r.units}{over && " ⚠"}</td>
             <td style={{ textAlign: "center" }}>{unlocked ? <input type="number" min="1" value={cap} onChange={(e) => onSetCapacity(r.label, Math.max(1, Number(e.target.value) || 1))} style={{ width: 46, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "2px 4px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}</td>
           </tr>
@@ -581,7 +588,7 @@ function OrgEditor({ org, onSave }) {
 }
 
 /* ---------- DETAIL DRAWER ---------- */
-function Detail({ p, byId, unlocked, workstreams, onClose, onUpdate, onRemove, onOpen }) {
+function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemove, onOpen }) {
   const ws = wsMeta(p.workstream);
   const deps = p.dependsOn || [];
   const committed = (p.deliverables || []).filter((d) => !d.stretch);
@@ -644,13 +651,23 @@ function Detail({ p, byId, unlocked, workstreams, onClose, onUpdate, onRemove, o
 
           <aside style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
             <Panel title="Team & resourcing">
-              {unlocked ? <RoleEditor items={p.roles || []} accent={ws.color} onCommit={(v) => onUpdate({ roles: v })} /> : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {(p.roles || []).map((r, i) => (
-                    <div key={i} style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 13 }}>
-                      <Avatar name={r.who} color={ws.color} /><div><span style={{ fontWeight: 600 }}>{r.who}</span><div style={{ color: T.inkSoft, lineHeight: 1.45, marginTop: 1 }}>{r.what}</div></div>
-                    </div>
-                  ))}
+              {unlocked ? <RoleEditor items={p.roles || []} accent={ws.color} org={org} onCommit={(v) => onUpdate({ roles: v })} /> : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {(p.roles || []).map((r, i) => {
+                    const res = resolveResource(org, r.who);
+                    return (
+                      <div key={i} style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 13 }}>
+                        <Avatar name={(res && res.lead) || r.who} color={ws.color} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+                            <span style={{ fontWeight: 600 }}>{resourcePath(org, r.who)}</span>
+                            <EffortChip effort={r.effort} ws={ws} />
+                          </div>
+                          {r.what && <div style={{ color: T.inkSoft, lineHeight: 1.45, marginTop: 2 }}>{r.what}</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
                   {!(p.roles || []).length && <div style={{ fontSize: 12.5, color: T.inkSoft }}>No resources assigned yet.</div>}
                 </div>
               )}
@@ -710,23 +727,43 @@ function DeliverableEditor({ items, accent, onCommit }) {
     </div>
   );
 }
-function RoleEditor({ items, accent, onCommit }) {
+function RoleEditor({ items, accent, org, onCommit }) {
   const [list, setList] = useState(items);
   useEffect(() => { setList(items); }, [items]);
   const push = (next) => { setList(next); onCommit(next); };
+  const opts = allResources(org);
+  const sel = { fontFamily: T.body, fontSize: 12.5, fontWeight: 600, padding: "4px 6px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink };
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-      {list.map((r, i) => (
-        <div key={i} style={{ display: "flex", gap: 7, alignItems: "flex-start" }}>
-          <Avatar name={r.who || "?"} color={accent} />
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 5 }}>
-            <input value={r.who} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, who: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="Team or person (internal or external)" style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink }} />
-            <input value={r.what} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, what: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="Responsibility" style={{ fontFamily: T.body, fontSize: 12.5, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.inkSoft }} />
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {list.map((r, i) => {
+        const cur = r.who || "";
+        const matched = opts.find((o) => normName(o.label) === normName(cur) || normName(o.lead) === normName(cur));
+        const selVal = matched ? matched.label : (cur ? "__cur__" : "");
+        const onWho = (v) => {
+          if (v === "__custom__") { const c = window.prompt("Resource name (team or person):", cur); if (c != null) push(list.map((x, j) => j === i ? { ...x, who: c.trim() } : x)); return; }
+          if (v === "__cur__") return;
+          push(list.map((x, j) => j === i ? { ...x, who: v } : x));
+        };
+        return (
+          <div key={i} style={{ display: "flex", gap: 7, alignItems: "flex-start" }}>
+            <Avatar name={(matched && matched.lead) || cur || "?"} color={accent} />
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 5 }}>
+              <div style={{ display: "flex", gap: 6 }}>
+                <select value={selVal} onChange={(e) => onWho(e.target.value)} style={{ ...sel, flex: 1 }}>
+                  {!matched && cur && <option value="__cur__">{cur} (custom)</option>}
+                  {!cur && <option value="" disabled>Select a team / resource…</option>}
+                  {opts.map((o) => <option key={o.group + o.label} value={o.label}>{o.group} · {o.label}{o.lead ? ` · ${o.lead}` : ""}</option>)}
+                  <option value="__custom__">+ Custom name…</option>
+                </select>
+                <MiniSelect value={r.effort || "M"} options={EFFORTS} onChange={(v) => push(list.map((x, j) => j === i ? { ...x, effort: v } : x))} />
+              </div>
+              <input value={r.what} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, what: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="What they do on this project" style={{ fontFamily: T.body, fontSize: 12.5, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.inkSoft }} />
+            </div>
+            <button onClick={() => push(list.filter((_, j) => j !== i))} style={xBtn} aria-label="Remove">✕</button>
           </div>
-          <button onClick={() => push(list.filter((_, j) => j !== i))} style={xBtn} aria-label="Remove">✕</button>
-        </div>
-      ))}
-      <button onClick={() => push([...list, { who: "", what: "" }])} style={addBtn}>+ Add resource</button>
+        );
+      })}
+      <button onClick={() => push([...list, { who: (opts[0] && opts[0].label) || "", what: "", effort: "M" }])} style={addBtn}>+ Add resource</button>
     </div>
   );
 }
@@ -783,7 +820,7 @@ function MiniSelect({ value, options, onChange }) {
 /* ---------- CSV import ---------- */
 const CSV_COLUMNS = ["title", "workstream", "effort", "impact", "target", "dri", "stakeholder", "problem", "solution", "success", "deliverables", "team", "dependsOn", "openItems"];
 const CSV_TEMPLATE = `title,workstream,effort,impact,target,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
-"Example Project","Supplies",L,4,"Q4 2026","Shannon Aubert","Supplies team","The pain and what it costs today.","The approach in plain language.","Measurable outcome and who owns it.","Build the thing | Wire up the sync | *Nice-to-have stretch","Business Systems :: Architects and builds | Empty Cup Digital :: HubSpot build | Data :: Pipelines","SUP-01 :: extends its foundation","Vendor API feasibility unvalidated"`;
+"Example Project","Supplies",L,4,"Q4 2026","Shannon Aubert","Supplies team","The pain and what it costs today.","The approach in plain language.","Measurable outcome and who owns it.","Build the thing | Wire up the sync | *Nice-to-have stretch","Business Systems :: Architects and builds :: L | HubSpot :: HubSpot build :: M | Data :: Pipelines :: S","SUP-01 :: extends its foundation","Vendor API feasibility unvalidated"`;
 
 function parseCSV(text) {
   const rows = []; let row = [], cur = "", q = false;
@@ -836,7 +873,7 @@ function csvToProjects(text, existing) {
       dri: at(r, "dri"), targetWindow: at(r, "target") || "TBD", stakeholder: at(r, "stakeholder"),
       problem: at(r, "problem"), solution: at(r, "solution"), success: at(r, "success"),
       deliverables: items(at(r, "deliverables")).map((t) => t.startsWith("*") ? { text: t.slice(1).trim(), stretch: true } : { text: t, stretch: false }),
-      roles: items(at(r, "team")).map((e) => { const [who, ...rest] = e.split("::"); return { who: (who || "").trim(), what: rest.join("::").trim() }; }).filter((x) => x.who),
+      roles: items(at(r, "team")).map((e) => { const a = e.split("::").map((x) => x.trim()); const eff = (a[2] || "").toUpperCase(); return { who: a[0] || "", what: a[1] || "", effort: EFFORTS.includes(eff) ? eff : "M" }; }).filter((x) => x.who),
       dependsOn: items(at(r, "dependson")).map((e) => { const a = e.split("::").map((x) => x.trim()); const ref = (a[0] || "").toLowerCase(); return { id: codeToId[ref] || ref, note: a[1] || "" }; }).filter((x) => x.id),
       openItems: items(at(r, "openitems")),
       impact: num(at(r, "impact"), 3), effort: EFFORTS.includes(effort) ? effort : "M",
@@ -857,7 +894,7 @@ function projectsToCsv(projects) {
       impact: p.impact ?? "", target: p.targetWindow || "", dri: p.dri || "", stakeholder: p.stakeholder || "",
       problem: p.problem || "", solution: p.solution || "", success: p.success || "",
       deliverables: (p.deliverables || []).map((d) => (d.stretch ? "*" : "") + d.text).join(" | "),
-      team: (p.roles || []).map((r) => `${r.who} :: ${r.what}`).join(" | "),
+      team: (p.roles || []).map((r) => `${r.who} :: ${r.what} :: ${r.effort || "M"}`).join(" | "),
       dependson: (p.dependsOn || []).map((d) => `${byId[d.id] ? byId[d.id].code : d.id} :: ${d.note || ""}`).join(" | "),
       openitems: (p.openItems || []).join(" | "),
     };
@@ -946,7 +983,7 @@ function AddModal({ onClose, onAdd, onBulkAdd, existing, workstreams }) {
               <div style={{ marginTop: 6 }}>List cells separate items with <code style={codeChip}>|</code> and sub-fields with <code style={codeChip}>::</code> —</div>
               <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
                 <li><strong>deliverables</strong>: <code style={codeChip}>Build X | *Stretch item</code> (prefix <code style={codeChip}>*</code> = stretch)</li>
-                <li><strong>team</strong>: <code style={codeChip}>Business Systems :: Builds it | Empty Cup Digital :: HubSpot</code></li>
+                <li><strong>team</strong>: <code style={codeChip}>Business Systems :: Builds it :: L | HubSpot :: HubSpot work :: M</code> (name :: what :: that team's effort)</li>
                 <li><strong>dependsOn</strong>: <code style={codeChip}>SUP-01 :: why it's needed</code></li>
                 <li><strong>openItems</strong>: <code style={codeChip}>Risk one | Assumption two</code></li>
               </ul>
