@@ -548,16 +548,18 @@ function OrgEditor({ org, onSave }) {
                 <div key={mi} style={{ borderLeft: `2px solid ${T.hairlineSoft}`, paddingLeft: 10, display: "flex", flexDirection: "column", gap: 5 }}>
                   <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                     <input defaultValue={m.name} onBlur={(e) => { if (e.target.value !== m.name) commit(setMember(gi, mi, (x) => ({ ...x, name: e.target.value }))); }} placeholder="Sub-team / unit" style={{ ...inp, fontWeight: 600, width: 150 }} />
-                    <input defaultValue={m.lead || ""} onBlur={(e) => { if ((e.target.value || "") !== (m.lead || "")) commit(setMember(gi, mi, (x) => ({ ...x, lead: e.target.value }))); }} placeholder="Lead" style={{ ...inp, width: 150 }} />
+                    <input defaultValue={m.lead || ""} onBlur={(e) => { if ((e.target.value || "") !== (m.lead || "")) commit(setMember(gi, mi, (x) => ({ ...x, lead: e.target.value }))); }} placeholder="Lead" style={{ ...inp, width: 130 }} />
+                    <input defaultValue={m.pm || ""} onBlur={(e) => { if ((e.target.value || "") !== (m.pm || "")) commit(setMember(gi, mi, (x) => ({ ...x, pm: e.target.value || undefined }))); }} placeholder="PM" style={{ ...inp, width: 110 }} />
                     <input defaultValue={(m.match || []).join(", ")} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, match: parseMatch(e.target.value) })))} placeholder="Matches (optional)" style={{ ...inp, flex: 1, minWidth: 120, color: T.inkSoft }} />
                     <button onClick={() => commit(setGroup(gi, (x) => ({ ...x, members: x.members.filter((_, i) => i !== mi) })))} style={xBtn} aria-label="Delete">✕</button>
                   </div>
                   {(m.sub || []).map((s, si) => (
                     <div key={si} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", paddingLeft: 16 }}>
                       <span style={{ color: T.inkSoft, fontSize: 12 }}>↳</span>
-                      <input defaultValue={s.name} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, name: e.target.value } : y)) })))} placeholder="Resource" style={{ ...inp, width: 140 }} />
-                      <input defaultValue={s.lead || ""} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, lead: e.target.value } : y)) })))} placeholder="Lead" style={{ ...inp, width: 140 }} />
-                      <input defaultValue={(s.match || []).join(", ")} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, match: parseMatch(e.target.value) } : y)) })))} placeholder="Matches" style={{ ...inp, flex: 1, minWidth: 110, color: T.inkSoft }} />
+                      <input defaultValue={s.name} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, name: e.target.value } : y)) })))} placeholder="Resource" style={{ ...inp, width: 130 }} />
+                      <input defaultValue={s.lead || ""} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, lead: e.target.value } : y)) })))} placeholder="Lead" style={{ ...inp, width: 120 }} />
+                      <input defaultValue={s.pm || ""} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, pm: e.target.value || undefined } : y)) })))} placeholder="PM" style={{ ...inp, width: 100 }} />
+                      <input defaultValue={(s.match || []).join(", ")} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, match: parseMatch(e.target.value) } : y)) })))} placeholder="Matches" style={{ ...inp, flex: 1, minWidth: 100, color: T.inkSoft }} />
                       <button onClick={() => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.filter((_, i) => i !== si) })))} style={xBtn} aria-label="Delete">✕</button>
                     </div>
                   ))}
