@@ -19,7 +19,7 @@ const T = {
   mono: "'JetBrains Mono', ui-monospace, 'SF Mono', monospace",
 };
 
-/* known workstreams (more can be added freely — unknown ones get a derived color) */
+/* known workstreams (more can be added freely — unknown ones get a derived color + code prefix) */
 const WS = {
   "Marketing Services": { color: "#6A4FD8", soft: "#EFEAFB", code: "MS" },
   "Supplies": { color: "#0E8A74", soft: "#E4F3EF", code: "SUP" },
@@ -29,17 +29,34 @@ const WS = {
 };
 const WS_PALETTE = ["#6A4FD8", "#0E8A74", "#C2750F", "#B5485D", "#2371A8", "#9A4FBF", "#3D7A2E", "#B5663A"];
 function hashStr(s) { let h = 0; for (let i = 0; i < (s || "").length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+function wsPrefix(name) {
+  if (!name) return "OTH";
+  const words = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  return name.replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase() || "OTH";
+}
 function wsMeta(name) {
   if (WS[name]) return WS[name];
   if (!name) return WS.Other;
   const color = WS_PALETTE[hashStr(name) % WS_PALETTE.length];
-  return { color, soft: color + "1A", code: name.slice(0, 3).toUpperCase() };
+  return { color, soft: color + "1A", code: wsPrefix(name) };
+}
+function genCode(ws, usedCodes) {
+  const pre = wsMeta(ws).code;
+  let n = 1, c;
+  do { c = `${pre}-${String(n).padStart(2, "0")}`; n++; } while (usedCodes.has(c));
+  usedCodes.add(c);
+  return c;
+}
+function nextCode(ws, projects, selfId) {
+  const used = new Set(projects.filter((p) => p.id !== selfId).map((p) => p.code));
+  return genCode(ws, used);
 }
 
-/* sizing is the single cost/effort measure */
-const SIZES = ["S", "M", "L", "XL"];
-const SIZE_POINTS = { S: 1, M: 2, L: 3, XL: 4 };
-const SIZE_LABEL = { S: "Small", M: "Medium", L: "Large", XL: "X-Large" };
+/* effort = single cost measure, XS–XL = 1–5 work units */
+const EFFORTS = ["XS", "S", "M", "L", "XL"];
+const EFFORT_POINTS = { XS: 1, S: 2, M: 3, L: 4, XL: 5 };
+const EFFORT_LABEL = { XS: "Extra-small", S: "Small", M: "Medium", L: "Large", XL: "Extra-large" };
 const DEFAULT_CAP = 6;
 const TARGETS = ["TBD", "Q3 2026", "Q4 2026", "Q1 2027", "Q2 2027", "H2 2026", "2027"];
 function targetRank(t) {
@@ -50,8 +67,8 @@ function targetRank(t) {
   return 999998;
 }
 
-/* ---------- resourcing taxonomy ---------- */
-const ORG = [
+/* ---------- default resourcing taxonomy (editable + persisted in settings.org) ---------- */
+const DEFAULT_ORG = [
   {
     name: "RevOps",
     members: [
@@ -119,16 +136,9 @@ function storeEditKey(k) { try { localStorage.setItem(KEY_STORE, k); } catch {} 
 function clearEditKey() { try { localStorage.removeItem(KEY_STORE); } catch {} }
 
 async function apiWrite(path, method, payload) {
-  const res = await fetch(path, {
-    method,
-    headers: { "Content-Type": "application/json", "x-edit-key": getEditKey() },
-    body: JSON.stringify(payload),
-  });
+  const res = await fetch(path, { method, headers: { "Content-Type": "application/json", "x-edit-key": getEditKey() }, body: JSON.stringify(payload) });
   if (res.status === 401) throw new Error("Editing is locked. Unlock with the password to make changes.");
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({}));
-    throw new Error(e.error || `Request failed (${res.status})`);
-  }
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Request failed (${res.status})`); }
   return res.json();
 }
 
@@ -137,18 +147,15 @@ function projectHaystack(p) {
   return [p.workstream, p.stakeholder, p.dri, ...(p.roles || []).map((r) => r.who)].join(" ").toLowerCase();
 }
 function resourceProjects(resource, projects) {
-  if (!resource.match) return [];
-  return projects.filter((p) => {
-    const h = projectHaystack(p);
-    return resource.match.some((m) => h.includes(m.toLowerCase()));
-  });
+  const terms = (resource.match && resource.match.length) ? resource.match : [resource.label];
+  return projects.filter((p) => { const h = projectHaystack(p); return terms.some((m) => m && h.includes(m.toLowerCase())); });
 }
-function projectLoad(p) { return SIZE_POINTS[p.size] || SIZE_POINTS.M; }
-function allResources() {
+function projectLoad(p) { return EFFORT_POINTS[p.effort] || EFFORT_POINTS.M; }
+function allResources(org) {
   const out = [];
-  ORG.forEach((g) => {
-    g.members.forEach((m) => {
-      if (m.sub) { if (m.match) out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm, match: m.match }); m.sub.forEach((s) => out.push({ group: g.name, label: s.name, parent: m.name, lead: s.lead, match: s.match })); }
+  (org || []).forEach((g) => {
+    (g.members || []).forEach((m) => {
+      if (m.sub) { out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm, match: m.match }); (m.sub || []).forEach((s) => out.push({ group: g.name, label: s.name, parent: m.name, lead: s.lead, match: s.match })); }
       else out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm, match: m.match });
     });
   });
@@ -156,26 +163,27 @@ function allResources() {
 }
 
 /* ---------- atoms ---------- */
-function Eyebrow({ children, color }) {
-  return <span style={{ fontFamily: T.mono, fontSize: 11, letterSpacing: "0.08em", fontWeight: 600, color: color || T.inkSoft }}>{children}</span>;
-}
-function Chip({ children, bg, fg }) {
-  return <span style={{ fontFamily: T.body, fontSize: 11.5, fontWeight: 500, padding: "3px 9px", borderRadius: 999, background: bg || T.hairlineSoft, color: fg || T.ink, whiteSpace: "nowrap" }}>{children}</span>;
-}
+function Eyebrow({ children, color }) { return <span style={{ fontFamily: T.mono, fontSize: 11, letterSpacing: "0.08em", fontWeight: 600, color: color || T.inkSoft }}>{children}</span>; }
+function Chip({ children, bg, fg }) { return <span style={{ fontFamily: T.body, fontSize: 11.5, fontWeight: 500, padding: "3px 9px", borderRadius: 999, background: bg || T.hairlineSoft, color: fg || T.ink, whiteSpace: "nowrap" }}>{children}</span>; }
 function ScoreDots({ value, color }) {
-  return (
-    <span style={{ display: "inline-flex", gap: 3, alignItems: "center" }}>
-      {[1, 2, 3, 4, 5].map((n) => <span key={n} style={{ width: 7, height: 7, borderRadius: 999, background: n <= value ? color : T.hairline }} />)}
-    </span>
-  );
+  return <span style={{ display: "inline-flex", gap: 3, alignItems: "center" }}>{[1, 2, 3, 4, 5].map((n) => <span key={n} style={{ width: 7, height: 7, borderRadius: 999, background: n <= value ? color : T.hairline }} />)}</span>;
 }
-function SizeChip({ size, ws }) {
-  const s = size || "M";
-  return <span title={`${SIZE_LABEL[s]} · ${SIZE_POINTS[s]} work units`} style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 6, background: (ws && ws.soft) || T.hairlineSoft, color: (ws && ws.color) || T.inkSoft, letterSpacing: "0.04em" }}>{s}</span>;
+function EffortChip({ effort, ws }) {
+  const e = effort || "M";
+  return <span title={`${EFFORT_LABEL[e]} · ${EFFORT_POINTS[e]}/5 work units`} style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 6, background: (ws && ws.soft) || T.hairlineSoft, color: (ws && ws.color) || T.inkSoft, letterSpacing: "0.04em" }}>{e}</span>;
 }
 function initials(name) { return (name || "").split(/[\s·]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase(); }
-function Avatar({ name, color }) {
-  return <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 999, background: (color || T.inkSoft) + "22", color: color || T.inkSoft, fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>{initials(name)}</span>;
+function Avatar({ name, color }) { return <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 999, background: (color || T.inkSoft) + "22", color: color || T.inkSoft, fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>{initials(name)}</span>; }
+
+function WorkstreamSelect({ value, options, onChange, color }) {
+  const opts = Array.from(new Set([value, ...options].filter(Boolean)));
+  return (
+    <select value={value || ""} onChange={(e) => { if (e.target.value === "__new__") { const v = window.prompt("New workstream name:"); if (v && v.trim()) onChange(v.trim()); } else onChange(e.target.value); }}
+      style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, padding: "3px 7px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: color || T.ink }}>
+      {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+      <option value="__new__">+ New workstream…</option>
+    </select>
+  );
 }
 
 /* ---------- main app ---------- */
@@ -183,6 +191,7 @@ export default function App() {
   const [view, setView] = useState("board");
   const [projects, setProjects] = useState([]);
   const [capacities, setCapacities] = useState({});
+  const [org, setOrg] = useState(DEFAULT_ORG);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [selectedId, setSelectedId] = useState(null);
@@ -196,7 +205,7 @@ export default function App() {
       const [pr, st] = await Promise.all([fetch("/api/projects"), fetch("/api/settings")]);
       if (!pr.ok) { const e = await pr.json().catch(() => ({})); throw new Error(e.error || `Could not load projects (${pr.status})`); }
       setProjects(await pr.json());
-      if (st.ok) { const s = await st.json(); setCapacities(s.capacities || {}); }
+      if (st.ok) { const s = await st.json(); setCapacities(s.capacities || {}); setOrg(Array.isArray(s.org) && s.org.length ? s.org : DEFAULT_ORG); }
     } catch (e) { setLoadError(e.message); } finally { setLoaded(true); }
   };
   useEffect(() => { refresh(); }, []);
@@ -214,8 +223,10 @@ export default function App() {
   const selected = selectedId ? byId[selectedId] : null;
 
   const updateProject = async (id, patch) => {
-    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-    try { await apiWrite("/api/projects", "PATCH", { id, ...patch }); }
+    let full = patch;
+    if ("workstream" in patch) full = { ...patch, code: nextCode(patch.workstream, projects, id) };
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, ...full } : p)));
+    try { await apiWrite("/api/projects", "PATCH", { id, ...full }); }
     catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
   };
   const addProject = async (proj) => { await apiWrite("/api/projects", "POST", proj); await refresh(); setSelectedId(proj.id); };
@@ -226,19 +237,17 @@ export default function App() {
     catch (e) { window.alert(`Couldn't remove: ${e.message}`); }
   };
   const exportCsv = () => {
-    const csv = projectsToCsv(projects);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob([projectsToCsv(projects)], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = "revops-portfolio.csv"; a.click();
+    const a = document.createElement("a"); a.href = url; a.download = "revops-portfolio.csv"; a.click();
     URL.revokeObjectURL(url);
   };
-  const setCapacity = async (label, value) => {
-    const next = { ...capacities, [label]: value };
-    setCapacities(next);
-    try { await apiWrite("/api/settings", "PUT", { capacities: next }); }
-    catch (e) { window.alert(`Couldn't save capacity: ${e.message}`); refresh(); }
+  const persistSettings = async (next) => {
+    const payload = { capacities: next.capacities ?? capacities, org: next.org ?? org };
+    try { await apiWrite("/api/settings", "PUT", payload); } catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
   };
+  const setCapacity = (label, value) => { const c = { ...capacities, [label]: value }; setCapacities(c); persistSettings({ capacities: c }); };
+  const saveOrg = (nextOrg) => { setOrg(nextOrg); persistSettings({ org: nextOrg }); };
 
   const workstreams = ["All", ...Array.from(new Set(projects.map((p) => p.workstream)))];
   const views = [["board", "Board"], ["matrix", "Priority matrix"], ["sequence", "Sequence"], ["resourcing", "Resourcing"]];
@@ -258,8 +267,6 @@ export default function App() {
         }
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
       `}</style>
-
-      <datalist id="ws-options">{allWorkstreams.map((w) => <option key={w} value={w} />)}</datalist>
 
       <header style={{ padding: "26px 28px 0", maxWidth: 1180, margin: "0 auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
@@ -286,9 +293,7 @@ export default function App() {
               {workstreams.map((w) => {
                 const meta = w === "All" ? null : wsMeta(w);
                 const active = wsFilter === w;
-                return (
-                  <button key={w} onClick={() => setWsFilter(w)} style={{ fontFamily: T.body, fontSize: 12, fontWeight: 500, padding: "5px 11px", borderRadius: 999, border: `1px solid ${active ? (w === "All" ? T.ink : meta.color) : T.hairline}`, background: active ? (w === "All" ? T.ink : meta.soft) : T.surface, color: active ? (w === "All" ? "#fff" : meta.color) : T.inkSoft }}>{w}</button>
-                );
+                return <button key={w} onClick={() => setWsFilter(w)} style={{ fontFamily: T.body, fontSize: 12, fontWeight: 500, padding: "5px 11px", borderRadius: 999, border: `1px solid ${active ? (w === "All" ? T.ink : meta.color) : T.hairline}`, background: active ? (w === "All" ? T.ink : meta.soft) : T.surface, color: active ? (w === "All" ? "#fff" : meta.color) : T.inkSoft }}>{w}</button>;
               })}
             </div>
           )}
@@ -306,11 +311,11 @@ export default function App() {
           ) : view === "board" ? <Board projects={visible} onOpen={setSelectedId} />
             : view === "matrix" ? <Matrix projects={visible} onOpen={setSelectedId} />
               : view === "sequence" ? <Sequence projects={visible} byId={byId} onOpen={setSelectedId} />
-                : <Resourcing projects={projects} capacities={capacities} unlocked={unlocked} onSetCapacity={setCapacity} onOpen={setSelectedId} />}
+                : <Resourcing projects={projects} org={org} capacities={capacities} unlocked={unlocked} onSetCapacity={setCapacity} onSaveOrg={saveOrg} onOpen={setSelectedId} />}
       </main>
 
-      {selected && <Detail p={selected} byId={byId} unlocked={unlocked} onClose={() => setSelectedId(null)} onUpdate={(patch) => updateProject(selected.id, patch)} onRemove={() => removeProject(selected.id)} onOpen={setSelectedId} />}
-      {showAdd && <AddModal onClose={() => setShowAdd(false)} onAdd={addProject} onBulkAdd={addProjects} existing={projects} />}
+      {selected && <Detail p={selected} byId={byId} unlocked={unlocked} workstreams={allWorkstreams} onClose={() => setSelectedId(null)} onUpdate={(patch) => updateProject(selected.id, patch)} onRemove={() => removeProject(selected.id)} onOpen={setSelectedId} />}
+      {showAdd && <AddModal onClose={() => setShowAdd(false)} onAdd={addProject} onBulkAdd={addProjects} existing={projects} workstreams={allWorkstreams} />}
     </div>
   );
 }
@@ -324,14 +329,10 @@ function Board({ projects, onOpen }) {
         const ws = wsMeta(p.workstream);
         return (
           <button key={p.id} onClick={() => onOpen(p.id)} style={{ textAlign: "left", background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 18, display: "flex", flexDirection: "column", gap: 10, borderTop: `3px solid ${ws.color}`, transition: "box-shadow .15s", fontFamily: T.body }}
-            onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 6px 18px rgba(28,37,33,.08)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}>
+            onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 6px 18px rgba(28,37,33,.08)"; }} onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <Eyebrow color={ws.color}>{p.code}</Eyebrow>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <Chip bg={ws.soft} fg={ws.color}>{p.workstream}</Chip>
-                <SizeChip size={p.size} ws={ws} />
-              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}><Chip bg={ws.soft} fg={ws.color}>{p.workstream}</Chip><EffortChip effort={p.effort} ws={ws} /></div>
             </div>
             <div style={{ fontFamily: T.display, fontWeight: 700, fontSize: 17.5, lineHeight: 1.2, letterSpacing: "-0.01em", color: T.ink }}>{p.title}</div>
             <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5, color: T.inkSoft, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.problem}</p>
@@ -346,42 +347,38 @@ function Board({ projects, onOpen }) {
   );
 }
 
-/* ---------- MATRIX (impact vs build size) ---------- */
+/* ---------- MATRIX (impact vs effort) ---------- */
 function Matrix({ projects, onOpen }) {
   if (!projects.length) return <Empty />;
   const W = 860, H = 560, PAD = 56;
-  const x = (u) => PAD + ((u - 0.5) / 4) * (W - PAD - 20);
+  const x = (u) => PAD + ((u - 0.5) / 5) * (W - PAD - 20);
   const y = (impact) => H - PAD - ((impact - 0.5) / 5) * (H - PAD - 30);
   const seen = {};
   const pts = projects.map((p) => {
-    const u = projectLoad(p);
-    const key = `${u}-${p.impact}`;
-    const n = seen[key] || 0; seen[key] = n + 1;
+    const u = projectLoad(p); const key = `${u}-${p.impact}`; const n = seen[key] || 0; seen[key] = n + 1;
     return { p, u, dx: (n % 2 === 0 ? 1 : -1) * Math.ceil(n / 2) * 26, dy: n * 6 };
   });
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 260px", gap: 18, alignItems: "start" }}>
       <div>
-        <h2 style={{ ...h2Style, marginBottom: 10 }}>Impact vs. build size</h2>
+        <h2 style={{ ...h2Style, marginBottom: 10 }}>Impact vs. effort</h2>
         <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 10, overflowX: "auto" }}>
-          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, display: "block" }} role="img" aria-label="Impact versus build size matrix">
-            <rect x={PAD} y={30} width={(W - PAD - 20) / 2} height={(H - PAD - 30) / 2} fill="#EDF6F0" rx={8} />
+          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, display: "block" }} role="img" aria-label="Impact versus effort matrix">
+            <rect x={PAD} y={30} width={(W - PAD - 20) * (2.5 / 5)} height={(H - PAD - 30) / 2} fill="#EDF6F0" rx={8} />
             {[1, 2, 3, 4, 5].map((n) => (<g key={`y${n}`}><line x1={PAD} y1={y(n)} x2={W - 20} y2={y(n)} stroke={T.hairlineSoft} /><text x={PAD - 14} y={y(n) + 4} textAnchor="end" fontSize="11" fill={T.inkSoft} fontFamily={T.mono}>{n}</text></g>))}
-            {[1, 2, 3, 4].map((u) => (<g key={`x${u}`}><line x1={x(u)} y1={30} x2={x(u)} y2={H - PAD} stroke={T.hairlineSoft} /><text x={x(u)} y={H - PAD + 20} textAnchor="middle" fontSize="11" fill={T.inkSoft} fontFamily={T.mono}>{SIZES[u - 1]}</text></g>))}
-            <line x1={x(2.5)} y1={30} x2={x(2.5)} y2={H - PAD} stroke={T.hairline} strokeDasharray="4 4" />
+            {[1, 2, 3, 4, 5].map((u) => (<g key={`x${u}`}><line x1={x(u)} y1={30} x2={x(u)} y2={H - PAD} stroke={T.hairlineSoft} /><text x={x(u)} y={H - PAD + 20} textAnchor="middle" fontSize="11" fill={T.inkSoft} fontFamily={T.mono}>{EFFORTS[u - 1]}</text></g>))}
+            <line x1={x(3)} y1={30} x2={x(3)} y2={H - PAD} stroke={T.hairline} strokeDasharray="4 4" />
             <line x1={PAD} y1={y(3)} x2={W - 20} y2={y(3)} stroke={T.hairline} strokeDasharray="4 4" />
             <text x={PAD + 12} y={48} fontSize="11" fontFamily={T.mono} fontWeight="600" fill="#0E8A74" letterSpacing="1">QUICK WINS</text>
             <text x={W - 32} y={48} fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.inkSoft} letterSpacing="1" textAnchor="end">BIG BETS</text>
             <text x={W - 32} y={H - PAD - 12} fontSize="11" fontFamily={T.mono} fontWeight="600" fill="#A33D3D" letterSpacing="1" textAnchor="end">RECONSIDER</text>
-            <text x={(PAD + W - 20) / 2} y={H - 10} textAnchor="middle" fontSize="12" fill={T.ink} fontFamily={T.body} fontWeight="600">Build size →</text>
+            <text x={(PAD + W - 20) / 2} y={H - 10} textAnchor="middle" fontSize="12" fill={T.ink} fontFamily={T.body} fontWeight="600">Effort →</text>
             <text x={16} y={(30 + H - PAD) / 2} fontSize="12" fill={T.ink} fontFamily={T.body} fontWeight="600" transform={`rotate(-90 16 ${(30 + H - PAD) / 2})`} textAnchor="middle">Impact →</text>
             {pts.map(({ p, u, dx, dy }) => {
-              const ws = wsMeta(p.workstream);
-              const cx = x(u) + dx, cy = y(p.impact) + dy;
+              const ws = wsMeta(p.workstream); const cx = x(u) + dx, cy = y(p.impact) + dy;
               return (
                 <g key={p.id} onClick={() => onOpen(p.id)} style={{ cursor: "pointer" }}>
-                  <circle cx={cx} cy={cy} r={13} fill={ws.color} opacity="0.92" />
-                  <circle cx={cx} cy={cy} r={13} fill="none" stroke="#fff" strokeWidth="2" />
+                  <circle cx={cx} cy={cy} r={13} fill={ws.color} opacity="0.92" /><circle cx={cx} cy={cy} r={13} fill="none" stroke="#fff" strokeWidth="2" />
                   <text x={cx} y={cy - 19} textAnchor="middle" fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.ink}>{p.code}</text>
                 </g>
               );
@@ -408,7 +405,7 @@ function Matrix({ projects, onOpen }) {
   );
 }
 
-/* ---------- SEQUENCE (by target window, with dependency arrows) ---------- */
+/* ---------- SEQUENCE (by target window, dependency arrows) ---------- */
 function Sequence({ projects, byId, onOpen }) {
   if (!projects.length) return <Empty />;
   const labels = Array.from(new Set(projects.map((p) => p.targetWindow || "TBD"))).sort((a, b) => targetRank(a) - targetRank(b));
@@ -435,29 +432,22 @@ function Sequence({ projects, byId, onOpen }) {
       </div>
       <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12, overflowX: "auto" }}>
         <svg width={Math.max(width, 280)} height={height} style={{ display: "block" }} role="img" aria-label="Sequence by target window">
-          <defs>
-            <marker id="seqArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0,0 L10,5 L0,10 z" fill="#A33D3D" />
-            </marker>
-          </defs>
+          <defs><marker id="seqArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#A33D3D" /></marker></defs>
           {labels.map((l, i) => <text key={l} x={colX(i)} y={20} fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.inkSoft} letterSpacing="0.06em">{l.toUpperCase()}</text>)}
           {edges.map(([from, to], i) => {
-            const a = pos[from], b = pos[to];
-            const sameCol = Math.abs(a.x - b.x) < 1;
+            const a = pos[from], b = pos[to]; const sameCol = Math.abs(a.x - b.x) < 1;
             const sx = a.x + (b.x >= a.x ? NODE_W : 0), sy = a.y + NODE_H / 2;
-            const ex = b.x + (b.x >= a.x ? 0 : NODE_W), ey = b.y + NODE_H / 2;
-            const mx = (sx + ex) / 2;
+            const ex = b.x + (b.x >= a.x ? 0 : NODE_W), ey = b.y + NODE_H / 2; const mx = (sx + ex) / 2;
             const d = sameCol ? `M ${a.x + NODE_W} ${sy} C ${a.x + NODE_W + 30} ${sy}, ${b.x + NODE_W + 30} ${ey}, ${b.x + NODE_W} ${ey}` : `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
             return <path key={i} d={d} fill="none" stroke="#A33D3D" strokeWidth="1.6" opacity="0.65" markerEnd="url(#seqArrow)" />;
           })}
           {projects.map((p) => {
-            const ws = wsMeta(p.workstream);
-            const { x: nx, y: ny } = pos[p.id];
+            const ws = wsMeta(p.workstream); const { x: nx, y: ny } = pos[p.id];
             return (
               <g key={p.id} onClick={() => onOpen(p.id)} style={{ cursor: "pointer" }}>
                 <rect x={nx} y={ny} width={NODE_W} height={NODE_H} rx={10} fill={T.surface} stroke={T.hairline} />
                 <rect x={nx} y={ny} width={4} height={NODE_H} rx={2} fill={ws.color} />
-                <text x={nx + 15} y={ny + 21} fontSize="10.5" fontFamily={T.mono} fontWeight="600" fill={ws.color} letterSpacing="0.06em">{p.code} · {p.size || "M"}</text>
+                <text x={nx + 15} y={ny + 21} fontSize="10.5" fontFamily={T.mono} fontWeight="600" fill={ws.color} letterSpacing="0.06em">{p.code} · {p.effort || "M"}</text>
                 <text x={nx + 15} y={ny + 38} fontSize="12" fontFamily={T.body} fontWeight="600" fill={T.ink}>{trunc(p.title, 23)}</text>
               </g>
             );
@@ -468,15 +458,13 @@ function Sequence({ projects, byId, onOpen }) {
   );
 }
 
-/* ---------- RESOURCING (full roster × projects allocation) ---------- */
-function Resourcing({ projects, capacities, unlocked, onSetCapacity, onOpen }) {
-  const resources = useMemo(() => allResources(), []);
+/* ---------- RESOURCING ---------- */
+function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSaveOrg, onOpen }) {
+  const [managing, setManaging] = useState(false);
+  const resources = useMemo(() => allResources(org), [org]);
   const byGroup = {};
-  ORG.forEach((g) => { byGroup[g.name] = []; });
-  resources.forEach((r) => {
-    const ps = resourceProjects(r, projects);
-    byGroup[r.group].push({ ...r, projects: ps, units: ps.reduce((s, p) => s + projectLoad(p), 0) });
-  });
+  (org || []).forEach((g) => { byGroup[g.name] = []; });
+  resources.forEach((r) => { const ps = resourceProjects(r, projects); (byGroup[r.group] = byGroup[r.group] || []).push({ ...r, projects: ps, units: ps.reduce((s, p) => s + projectLoad(p), 0) }); });
   const involved = (r, p) => r.projects.some((x) => x.id === p.id);
 
   return (
@@ -484,31 +472,29 @@ function Resourcing({ projects, capacities, unlocked, onSetCapacity, onOpen }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
         <div>
           <h2 style={{ ...h2Style, marginBottom: 2 }}>Resourcing & allocation</h2>
-          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>The full team roster × projects. Each cell is the project's work units; the total is allocated load.{unlocked ? " Capacity is editable." : ""}</p>
+          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>The full team roster × projects. Each cell is the project's work units; the total is allocated load.</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.mono, fontSize: 11.5, color: T.inkSoft }}>
+          {unlocked && <button onClick={() => setManaging((m) => !m)} style={btnGhost}>{managing ? "Done" : "✎ Manage teams"}</button>}
           <span style={{ letterSpacing: "0.06em" }}>WORK UNITS</span>
-          {SIZES.map((s) => <span key={s} style={{ padding: "2px 7px", borderRadius: 6, background: T.hairlineSoft, color: T.ink, fontWeight: 700 }}>{s} = {SIZE_POINTS[s]}</span>)}
+          {EFFORTS.map((s) => <span key={s} style={{ padding: "2px 7px", borderRadius: 6, background: T.hairlineSoft, color: T.ink, fontWeight: 700 }}>{s}={EFFORT_POINTS[s]}</span>)}
         </div>
       </div>
+
+      {managing && unlocked && <OrgEditor org={org} onSave={onSaveOrg} />}
 
       <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760, fontFamily: T.body }}>
           <thead>
             <tr>
               <th style={{ ...thStyle, textAlign: "left", minWidth: 220 }}>Team / resource</th>
-              {projects.map((p) => {
-                const ws = wsMeta(p.workstream);
-                return <th key={p.id} style={thStyle}><button onClick={() => onOpen(p.id)} title={p.title} style={{ background: "none", border: "none", color: ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em" }}>{p.code}</button></th>;
-              })}
+              {projects.map((p) => { const ws = wsMeta(p.workstream); return <th key={p.id} style={thStyle}><button onClick={() => onOpen(p.id)} title={p.title} style={{ background: "none", border: "none", color: ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em" }}>{p.code}</button></th>; })}
               <th style={{ ...thStyle, borderLeft: `1px solid ${T.hairline}` }}>Allocated</th>
               <th style={thStyle}>Capacity</th>
             </tr>
           </thead>
           <tbody>
-            {ORG.map((g) => (
-              <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name]} projects={projects} capacities={capacities} unlocked={unlocked} onSetCapacity={onSetCapacity} involved={involved} />
-            ))}
+            {(org || []).map((g) => <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name] || []} projects={projects} capacities={capacities} unlocked={unlocked} onSetCapacity={onSetCapacity} involved={involved} />)}
           </tbody>
         </table>
       </div>
@@ -519,32 +505,15 @@ function Resourcing({ projects, capacities, unlocked, onSetCapacity, onOpen }) {
 function ResourceGroup({ group, rows, projects, capacities, unlocked, onSetCapacity, involved }) {
   return (
     <>
-      <tr>
-        <td colSpan={projects.length + 3} style={{ padding: "10px 14px 4px", background: T.paper, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{group}</td>
-      </tr>
+      <tr><td colSpan={projects.length + 3} style={{ padding: "10px 14px 4px", background: T.paper, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{group}</td></tr>
       {rows.map((r) => {
-        const cap = capacities[r.label] ?? DEFAULT_CAP;
-        const over = r.units > cap;
+        const cap = capacities[r.label] ?? DEFAULT_CAP; const over = r.units > cap;
         return (
           <tr key={r.label} style={{ borderTop: `1px solid ${T.hairlineSoft}` }}>
-            <td style={{ padding: "9px 14px", fontSize: 13 }}>
-              <span style={{ fontWeight: 600 }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</span>
-              {r.lead && <span style={{ marginLeft: 8, fontSize: 11, color: T.inkSoft }}>{r.lead}{r.pm ? ` · PM ${r.pm}` : ""}</span>}
-            </td>
-            {projects.map((p) => {
-              const ws = wsMeta(p.workstream);
-              return (
-                <td key={p.id} style={{ textAlign: "center", padding: "9px 6px" }}>
-                  {involved(r, p) ? <span title={`${p.code} · ${projectLoad(p)} units`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, background: ws.soft, color: ws.color, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 }}>{projectLoad(p)}</span> : null}
-                </td>
-              );
-            })}
+            <td style={{ padding: "9px 14px", fontSize: 13 }}><span style={{ fontWeight: 600 }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</span>{r.lead && <span style={{ marginLeft: 8, fontSize: 11, color: T.inkSoft }}>{r.lead}{r.pm ? ` · PM ${r.pm}` : ""}</span>}</td>
+            {projects.map((p) => { const ws = wsMeta(p.workstream); return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px" }}>{involved(r, p) ? <span title={`${p.code} · ${projectLoad(p)} units`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, background: ws.soft, color: ws.color, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 }}>{projectLoad(p)}</span> : null}</td>; })}
             <td style={{ textAlign: "center", fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: over ? "#C0463E" : (r.units ? T.ink : T.hairline), borderLeft: `1px solid ${T.hairline}` }}>{r.units}{over && " ⚠"}</td>
-            <td style={{ textAlign: "center" }}>
-              {unlocked
-                ? <input type="number" min="1" value={cap} onChange={(e) => onSetCapacity(r.label, Math.max(1, Number(e.target.value) || 1))} style={{ width: 46, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "2px 4px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} />
-                : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}
-            </td>
+            <td style={{ textAlign: "center" }}>{unlocked ? <input type="number" min="1" value={cap} onChange={(e) => onSetCapacity(r.label, Math.max(1, Number(e.target.value) || 1))} style={{ width: 46, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "2px 4px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}</td>
           </tr>
         );
       })}
@@ -552,8 +521,61 @@ function ResourceGroup({ group, rows, projects, capacities, unlocked, onSetCapac
   );
 }
 
+/* ---------- ORG EDITOR (add/modify teams, subteams, resources) ---------- */
+function OrgEditor({ org, onSave }) {
+  const [draft, setDraft] = useState(org);
+  useEffect(() => { setDraft(org); }, [org]);
+  const commit = (next) => { setDraft(next); onSave(next); };
+  const parseMatch = (s) => { const a = (s || "").split(",").map((x) => x.trim()).filter(Boolean); return a.length ? a : undefined; };
+
+  const setGroup = (gi, fn) => draft.map((g, i) => (i === gi ? fn(g) : g));
+  const setMember = (gi, mi, fn) => setGroup(gi, (g) => ({ ...g, members: g.members.map((m, i) => (i === mi ? fn(m) : m)) }));
+
+  const inp = { fontFamily: T.body, fontSize: 12.5, padding: "3px 7px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink };
+
+  return (
+    <div style={{ background: T.paper, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 16 }}>
+      <div style={{ marginBottom: 10 }}><SectionTitle>Manage roster</SectionTitle> <span style={{ fontSize: 12, color: T.inkSoft }}>— add or edit teams, sub-teams, and people. “Matches” are comma-separated terms a project's resource names must contain to count toward this team (defaults to the name).</span></div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {draft.map((g, gi) => (
+          <div key={gi} style={{ border: `1px solid ${T.hairline}`, borderRadius: 10, padding: "10px 12px", background: T.surface }}>
+            <div style={{ display: "flex", gap: 7, alignItems: "center", marginBottom: 8 }}>
+              <input defaultValue={g.name} onBlur={(e) => { if (e.target.value !== g.name) commit(setGroup(gi, (x) => ({ ...x, name: e.target.value }))); }} placeholder="Team name" style={{ ...inp, fontWeight: 700, fontFamily: T.display, fontSize: 14, flex: 1 }} />
+              <button onClick={() => commit(draft.filter((_, i) => i !== gi))} style={xBtn} aria-label="Delete team">✕ team</button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingLeft: 4 }}>
+              {(g.members || []).map((m, mi) => (
+                <div key={mi} style={{ borderLeft: `2px solid ${T.hairlineSoft}`, paddingLeft: 10, display: "flex", flexDirection: "column", gap: 5 }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <input defaultValue={m.name} onBlur={(e) => { if (e.target.value !== m.name) commit(setMember(gi, mi, (x) => ({ ...x, name: e.target.value }))); }} placeholder="Sub-team / unit" style={{ ...inp, fontWeight: 600, width: 150 }} />
+                    <input defaultValue={m.lead || ""} onBlur={(e) => { if ((e.target.value || "") !== (m.lead || "")) commit(setMember(gi, mi, (x) => ({ ...x, lead: e.target.value }))); }} placeholder="Lead" style={{ ...inp, width: 150 }} />
+                    <input defaultValue={(m.match || []).join(", ")} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, match: parseMatch(e.target.value) })))} placeholder="Matches (optional)" style={{ ...inp, flex: 1, minWidth: 120, color: T.inkSoft }} />
+                    <button onClick={() => commit(setGroup(gi, (x) => ({ ...x, members: x.members.filter((_, i) => i !== mi) })))} style={xBtn} aria-label="Delete">✕</button>
+                  </div>
+                  {(m.sub || []).map((s, si) => (
+                    <div key={si} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", paddingLeft: 16 }}>
+                      <span style={{ color: T.inkSoft, fontSize: 12 }}>↳</span>
+                      <input defaultValue={s.name} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, name: e.target.value } : y)) })))} placeholder="Resource" style={{ ...inp, width: 140 }} />
+                      <input defaultValue={s.lead || ""} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, lead: e.target.value } : y)) })))} placeholder="Lead" style={{ ...inp, width: 140 }} />
+                      <input defaultValue={(s.match || []).join(", ")} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, match: parseMatch(e.target.value) } : y)) })))} placeholder="Matches" style={{ ...inp, flex: 1, minWidth: 110, color: T.inkSoft }} />
+                      <button onClick={() => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.filter((_, i) => i !== si) })))} style={xBtn} aria-label="Delete">✕</button>
+                    </div>
+                  ))}
+                  <button onClick={() => commit(setMember(gi, mi, (x) => ({ ...x, sub: [...(x.sub || []), { name: "New resource", lead: "" }] })))} style={{ ...addBtn, marginLeft: 16 }}>+ Add resource</button>
+                </div>
+              ))}
+              <button onClick={() => commit(setGroup(gi, (x) => ({ ...x, members: [...(x.members || []), { name: "New sub-team", lead: "" }] })))} style={addBtn}>+ Add sub-team</button>
+            </div>
+          </div>
+        ))}
+        <button onClick={() => commit([...draft, { name: "New team", members: [] }])} style={btnSolid}>+ Add team</button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- DETAIL DRAWER ---------- */
-function Detail({ p, byId, unlocked, onClose, onUpdate, onRemove, onOpen }) {
+function Detail({ p, byId, unlocked, workstreams, onClose, onUpdate, onRemove, onOpen }) {
   const ws = wsMeta(p.workstream);
   const deps = p.dependsOn || [];
   const committed = (p.deliverables || []).filter((d) => !d.stretch);
@@ -569,12 +591,9 @@ function Detail({ p, byId, unlocked, onClose, onUpdate, onRemove, onOpen }) {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <Eyebrow color={ws.color}>{p.code}</Eyebrow>
-                {unlocked
-                  ? <input list="ws-options" defaultValue={p.workstream} onBlur={(e) => { if (e.target.value !== p.workstream) onUpdate({ workstream: e.target.value }); }} placeholder="Workstream" style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, padding: "3px 7px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: ws.color }} />
-                  : <Chip bg={ws.soft} fg={ws.color}>{p.workstream}</Chip>}
+                {unlocked ? <WorkstreamSelect value={p.workstream} options={workstreams} color={ws.color} onChange={(v) => onUpdate({ workstream: v })} /> : <Chip bg={ws.soft} fg={ws.color}>{p.workstream}</Chip>}
               </div>
-              {unlocked
-                ? <div style={{ marginTop: 8 }}><TextEdit value={p.title} placeholder="Project title" big onCommit={(v) => onUpdate({ title: v })} /></div>
+              {unlocked ? <div style={{ marginTop: 8 }}><TextEdit value={p.title} placeholder="Project title" big onCommit={(v) => onUpdate({ title: v })} /></div>
                 : <h2 style={{ fontFamily: T.display, fontWeight: 800, fontSize: 24, margin: "8px 0 0", letterSpacing: "-0.02em", lineHeight: 1.1 }}>{p.title}</h2>}
               {(unlocked || p.dri) && (
                 <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8 }}>
@@ -587,27 +606,20 @@ function Detail({ p, byId, unlocked, onClose, onUpdate, onRemove, onOpen }) {
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 0, marginTop: 16, border: `1px solid ${T.hairline}`, borderRadius: 10, overflow: "hidden" }}>
             <Stat label="Impact">{unlocked ? <MiniSelect value={p.impact} options={[1, 2, 3, 4, 5]} onChange={(v) => onUpdate({ impact: Number(v) })} /> : <ScoreDots value={p.impact} color={ws.color} />}</Stat>
-            <Stat label="Size">{unlocked ? <MiniSelect value={p.size || "M"} options={SIZES} onChange={(v) => onUpdate({ size: v })} /> : <SizeChip size={p.size} ws={ws} />}</Stat>
+            <Stat label="Effort">{unlocked ? <MiniSelect value={p.effort || "M"} options={EFFORTS} onChange={(v) => onUpdate({ effort: v })} /> : <EffortChip effort={p.effort} ws={ws} />}</Stat>
             <Stat label="Target">{unlocked ? <MiniSelect value={p.targetWindow || "TBD"} options={targetOpts} onChange={(v) => onUpdate({ targetWindow: v })} /> : <span style={{ fontSize: 13, fontWeight: 600 }}>{p.targetWindow || "TBD"}</span>}</Stat>
           </div>
         </div>
 
         <div className="proj-grid" style={{ padding: "20px 26px 6px" }}>
-          {/* MAIN */}
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-            <AccentCard accent="#C0463E" icon="!" title="The problem">
-              {unlocked ? <AreaEdit value={p.problem} onCommit={(v) => onUpdate({ problem: v })} /> : <p style={cardText}>{p.problem}</p>}
-            </AccentCard>
-            <AccentCard accent={ws.color} icon="→" title="The solution">
-              {unlocked ? <AreaEdit value={p.solution} onCommit={(v) => onUpdate({ solution: v })} /> : <p style={cardText}>{p.solution}</p>}
-            </AccentCard>
+            <AccentCard accent="#C0463E" icon="!" title="The problem">{unlocked ? <AreaEdit value={p.problem} onCommit={(v) => onUpdate({ problem: v })} /> : <p style={cardText}>{p.problem}</p>}</AccentCard>
+            <AccentCard accent={ws.color} icon="→" title="The solution">{unlocked ? <AreaEdit value={p.solution} onCommit={(v) => onUpdate({ solution: v })} /> : <p style={cardText}>{p.solution}</p>}</AccentCard>
 
             <Panel title={`What's being built${committed.length ? ` · ${committed.length}` : ""}`}>
               {unlocked ? <DeliverableEditor items={p.deliverables || []} accent={ws.color} onCommit={(v) => onUpdate({ deliverables: v })} /> : (
                 <>
-                  <ul style={listReset}>
-                    {committed.map((d, i) => <li key={i} style={liRow}><span style={{ color: ws.color, fontWeight: 700, marginTop: 1 }}>✓</span><span>{d.text}</span></li>)}
-                  </ul>
+                  <ul style={listReset}>{committed.map((d, i) => <li key={i} style={liRow}><span style={{ color: ws.color, fontWeight: 700, marginTop: 1 }}>✓</span><span>{d.text}</span></li>)}</ul>
                   {stretch.length > 0 && (
                     <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px dashed ${T.hairline}` }}>
                       <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: "#9A6A12", marginBottom: 8 }}>STRETCH — IF TIME ALLOWS</div>
@@ -624,15 +636,13 @@ function Detail({ p, byId, unlocked, onClose, onUpdate, onRemove, onOpen }) {
             </div>
           </div>
 
-          {/* RAIL */}
           <aside style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
             <Panel title="Team & resourcing">
               {unlocked ? <RoleEditor items={p.roles || []} accent={ws.color} onCommit={(v) => onUpdate({ roles: v })} /> : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   {(p.roles || []).map((r, i) => (
                     <div key={i} style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 13 }}>
-                      <Avatar name={r.who} color={ws.color} />
-                      <div><span style={{ fontWeight: 600 }}>{r.who}</span><div style={{ color: T.inkSoft, lineHeight: 1.45, marginTop: 1 }}>{r.what}</div></div>
+                      <Avatar name={r.who} color={ws.color} /><div><span style={{ fontWeight: 600 }}>{r.who}</span><div style={{ color: T.inkSoft, lineHeight: 1.45, marginTop: 1 }}>{r.what}</div></div>
                     </div>
                   ))}
                   {!(p.roles || []).length && <div style={{ fontSize: 12.5, color: T.inkSoft }}>No resources assigned yet.</div>}
@@ -644,15 +654,7 @@ function Detail({ p, byId, unlocked, onClose, onUpdate, onRemove, onOpen }) {
               <Panel title="Depends on">
                 {unlocked ? <DependsEditor items={deps} options={depOptions} onCommit={(v) => onUpdate({ dependsOn: v })} /> : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {deps.map((d, i) => {
-                      const dep = byId[d.id];
-                      return (
-                        <div key={i} style={{ fontSize: 13, lineHeight: 1.5, display: "flex", gap: 8, alignItems: "baseline" }}>
-                          <span style={{ color: "#A33D3D", fontWeight: 700 }}>↳</span>
-                          <span>{dep ? <button onClick={() => onOpen(dep.id)} style={linkBtn}>{dep.code} — {dep.title}</button> : <span style={{ fontWeight: 600 }}>Outside this portfolio</span>}{d.note && <span style={{ color: T.inkSoft }}> — {d.note}</span>}</span>
-                        </div>
-                      );
-                    })}
+                    {deps.map((d, i) => { const dep = byId[d.id]; return <div key={i} style={{ fontSize: 13, lineHeight: 1.5, display: "flex", gap: 8, alignItems: "baseline" }}><span style={{ color: "#A33D3D", fontWeight: 700 }}>↳</span><span>{dep ? <button onClick={() => onOpen(dep.id)} style={linkBtn}>{dep.code} — {dep.title}</button> : <span style={{ fontWeight: 600 }}>Outside this portfolio</span>}{d.note && <span style={{ color: T.inkSoft }}> — {d.note}</span>}</span></div>; })}
                   </div>
                 )}
               </Panel>
@@ -665,24 +667,10 @@ function Detail({ p, byId, unlocked, onClose, onUpdate, onRemove, onOpen }) {
                   : <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: "#6E5612" }}>{p.openItems.map((o, i) => <li key={i}>{o}</li>)}</ul>}
               </div>
             )}
-
-            <Panel title="Ownership">
-              <div style={{ fontSize: 13, lineHeight: 1.6 }}>
-                {p.dri && <div style={{ marginBottom: 4 }}><span style={{ color: T.inkSoft }}>DRI · </span><span style={{ fontWeight: 600 }}>{p.dri}</span></div>}
-                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                  <span style={{ color: T.inkSoft }}>Stakeholder · </span>
-                  {unlocked ? <TextEdit value={p.stakeholder} placeholder="Stakeholder team" onCommit={(v) => onUpdate({ stakeholder: v })} /> : <span style={{ fontWeight: 600 }}>{p.stakeholder}</span>}
-                </div>
-              </div>
-            </Panel>
           </aside>
         </div>
 
-        {unlocked && (
-          <div style={{ padding: "8px 26px 32px" }}>
-            <button onClick={onRemove} style={{ fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "9px 14px", borderRadius: 8, background: "none", border: "1px solid #D9A0A0", color: "#A33D3D" }}>Remove project</button>
-          </div>
-        )}
+        {unlocked && <div style={{ padding: "8px 26px 32px" }}><button onClick={onRemove} style={{ fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "9px 14px", borderRadius: 8, background: "none", border: "1px solid #D9A0A0", color: "#A33D3D" }}>Remove project</button></div>}
       </div>
     </div>
   );
@@ -692,18 +680,12 @@ function Detail({ p, byId, unlocked, onClose, onUpdate, onRemove, onOpen }) {
 function TextEdit({ value, placeholder, onCommit, big }) {
   const [v, setV] = useState(value || "");
   useEffect(() => { setV(value || ""); }, [value]);
-  return (
-    <input value={v} placeholder={placeholder} onChange={(e) => setV(e.target.value)} onBlur={() => { if (v !== (value || "")) onCommit(v); }}
-      style={{ fontFamily: big ? T.display : T.body, fontSize: big ? 20 : 12.5, fontWeight: big ? 800 : 600, letterSpacing: big ? "-0.01em" : 0, padding: big ? "4px 8px" : "3px 7px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, minWidth: big ? "100%" : 150, width: big ? "100%" : undefined }} />
-  );
+  return <input value={v} placeholder={placeholder} onChange={(e) => setV(e.target.value)} onBlur={() => { if (v !== (value || "")) onCommit(v); }} style={{ fontFamily: big ? T.display : T.body, fontSize: big ? 20 : 12.5, fontWeight: big ? 800 : 600, letterSpacing: big ? "-0.01em" : 0, padding: big ? "4px 8px" : "3px 7px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, minWidth: big ? "100%" : 150, width: big ? "100%" : undefined }} />;
 }
 function AreaEdit({ value, onCommit, rows = 3 }) {
   const [v, setV] = useState(value || "");
   useEffect(() => { setV(value || ""); }, [value]);
-  return (
-    <textarea value={v} rows={rows} onChange={(e) => setV(e.target.value)} onBlur={() => { if (v !== (value || "")) onCommit(v); }}
-      style={{ width: "100%", fontFamily: T.body, fontSize: 13, lineHeight: 1.5, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, resize: "vertical" }} />
-  );
+  return <textarea value={v} rows={rows} onChange={(e) => setV(e.target.value)} onBlur={() => { if (v !== (value || "")) onCommit(v); }} style={{ width: "100%", fontFamily: T.body, fontSize: 13, lineHeight: 1.5, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, resize: "vertical" }} />;
 }
 function DeliverableEditor({ items, accent, onCommit }) {
   const [list, setList] = useState(items);
@@ -780,43 +762,21 @@ function DependsEditor({ items, options, onCommit }) {
 }
 
 function Stat({ label, children }) {
-  return (
-    <div style={{ flex: "1 1 0", minWidth: 88, padding: "9px 12px", background: T.surface, borderRight: `1px solid ${T.hairlineSoft}` }}>
-      <div style={{ fontFamily: T.mono, fontSize: 9.5, letterSpacing: "0.1em", color: T.inkSoft, marginBottom: 5 }}>{label.toUpperCase()}</div>
-      <div style={{ display: "flex", alignItems: "center", minHeight: 22 }}>{children}</div>
-    </div>
-  );
+  return <div style={{ flex: "1 1 0", minWidth: 88, padding: "9px 12px", background: T.surface, borderRight: `1px solid ${T.hairlineSoft}` }}><div style={{ fontFamily: T.mono, fontSize: 9.5, letterSpacing: "0.1em", color: T.inkSoft, marginBottom: 5 }}>{label.toUpperCase()}</div><div style={{ display: "flex", alignItems: "center", minHeight: 22 }}>{children}</div></div>;
 }
 function AccentCard({ accent, icon, title, children }) {
-  return (
-    <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderLeft: `3px solid ${accent}`, borderRadius: 10, padding: "12px 14px" }}>
-      <div style={{ display: "flex", gap: 7, alignItems: "center", marginBottom: 6 }}>
-        <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, borderRadius: 4, background: accent, color: "#fff", fontSize: 11, fontWeight: 700 }}>{icon}</span>
-        <SectionTitle>{title}</SectionTitle>
-      </div>
-      {children}
-    </div>
-  );
+  return <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderLeft: `3px solid ${accent}`, borderRadius: 10, padding: "12px 14px" }}><div style={{ display: "flex", gap: 7, alignItems: "center", marginBottom: 6 }}><span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, borderRadius: 4, background: accent, color: "#fff", fontSize: 11, fontWeight: 700 }}>{icon}</span><SectionTitle>{title}</SectionTitle></div>{children}</div>;
 }
 function Panel({ title, children }) {
-  return (
-    <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: "14px 16px" }}>
-      <div style={{ marginBottom: 10 }}><SectionTitle>{title}</SectionTitle></div>
-      {children}
-    </div>
-  );
+  return <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: "14px 16px" }}><div style={{ marginBottom: 10 }}><SectionTitle>{title}</SectionTitle></div>{children}</div>;
 }
 function MiniSelect({ value, options, onChange }) {
-  return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, padding: "3px 6px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink }}>
-      {options.map((o) => <option key={o} value={o}>{o}</option>)}
-    </select>
-  );
+  return <select value={value} onChange={(e) => onChange(e.target.value)} style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, padding: "3px 6px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink }}>{options.map((o) => <option key={o} value={o}>{o}</option>)}</select>;
 }
 
 /* ---------- CSV import ---------- */
-const CSV_COLUMNS = ["title", "workstream", "size", "impact", "target", "dri", "stakeholder", "problem", "solution", "success", "deliverables", "team", "dependsOn", "openItems"];
-const CSV_TEMPLATE = `title,workstream,size,impact,target,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
+const CSV_COLUMNS = ["title", "workstream", "effort", "impact", "target", "dri", "stakeholder", "problem", "solution", "success", "deliverables", "team", "dependsOn", "openItems"];
+const CSV_TEMPLATE = `title,workstream,effort,impact,target,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
 "Example Project","Supplies",L,4,"Q4 2026","Shannon Aubert","Supplies team","The pain and what it costs today.","The approach in plain language.","Measurable outcome and who owns it.","Build the thing | Wire up the sync | *Nice-to-have stretch","Business Systems :: Architects and builds | Empty Cup Digital :: HubSpot build | Data :: Pipelines","SUP-01 :: extends its foundation","Vendor API feasibility unvalidated"`;
 
 function parseCSV(text) {
@@ -843,7 +803,8 @@ function csvToProjects(text, existing) {
 
   const codeToId = {};
   existing.forEach((p) => { codeToId[p.code.toLowerCase()] = p.id; codeToId[p.id.toLowerCase()] = p.id; });
-  const used = new Set(existing.map((p) => p.id));
+  const usedIds = new Set(existing.map((p) => p.id));
+  const usedCodes = new Set(existing.map((p) => p.code));
   const items = (s) => (s ? s.split("|").map((x) => x.trim()).filter(Boolean) : []);
   const num = (v, d) => { const n = Number(v); return n >= 1 && n <= 5 ? n : d; };
   const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "project";
@@ -852,17 +813,18 @@ function csvToProjects(text, existing) {
   for (let k = 1; k < rows.length; k++) {
     const r = rows[k];
     const title = at(r, "title"); if (!title) continue;
-    const providedCode = at(r, "code");
-    const base = slug(providedCode || title);
-    let id = base, n = 2; while (used.has(id)) id = `${base}-${n++}`; used.add(id);
-    const code = (providedCode || id).toUpperCase();
+    const ws = at(r, "workstream") || "Other";
+    const base = slug(title);
+    let id = base, n = 2; while (usedIds.has(id)) id = `${base}-${n++}`; usedIds.add(id);
+    const provided = at(r, "code");
+    const code = provided ? provided.toUpperCase() : genCode(ws, usedCodes);
+    if (provided) usedCodes.add(code);
     codeToId[code.toLowerCase()] = id; codeToId[id.toLowerCase()] = id;
-    raw.push({ r, id, code, title });
+    raw.push({ r, id, code, title, ws });
   }
 
-  const out = raw.map(({ r, id, code, title }) => {
-    const ws = at(r, "workstream") || "Other";
-    const size = (at(r, "size") || "M").toUpperCase();
+  const out = raw.map(({ r, id, code, title, ws }) => {
+    const effort = (at(r, "effort") || "M").toUpperCase();
     return {
       id, code, title, workstream: ws,
       dri: at(r, "dri"), targetWindow: at(r, "target") || "TBD", stakeholder: at(r, "stakeholder"),
@@ -871,7 +833,7 @@ function csvToProjects(text, existing) {
       roles: items(at(r, "team")).map((e) => { const [who, ...rest] = e.split("::"); return { who: (who || "").trim(), what: rest.join("::").trim() }; }).filter((x) => x.who),
       dependsOn: items(at(r, "dependson")).map((e) => { const a = e.split("::").map((x) => x.trim()); const ref = (a[0] || "").toLowerCase(); return { id: codeToId[ref] || ref, note: a[1] || "" }; }).filter((x) => x.id),
       openItems: items(at(r, "openitems")),
-      impact: num(at(r, "impact"), 3), size: SIZES.includes(size) ? size : "M",
+      impact: num(at(r, "impact"), 3), effort: EFFORTS.includes(effort) ? effort : "M",
     };
   });
   return { projects: out, error: out.length ? "" : "No rows with a title were found." };
@@ -885,7 +847,7 @@ function projectsToCsv(projects) {
   const lines = [cols.join(",")];
   projects.forEach((p) => {
     const cell = {
-      code: p.code || "", title: p.title || "", workstream: p.workstream || "", size: p.size || "M",
+      code: p.code || "", title: p.title || "", workstream: p.workstream || "", effort: p.effort || "M",
       impact: p.impact ?? "", target: p.targetWindow || "", dri: p.dri || "", stakeholder: p.stakeholder || "",
       problem: p.problem || "", solution: p.solution || "", success: p.success || "",
       deliverables: (p.deliverables || []).map((d) => (d.stretch ? "*" : "") + d.text).join(" | "),
@@ -898,10 +860,10 @@ function projectsToCsv(projects) {
   return lines.join("\n");
 }
 
-/* ---------- ADD MODAL (form or CSV) ---------- */
-function AddModal({ onClose, onAdd, onBulkAdd, existing }) {
+/* ---------- ADD MODAL ---------- */
+function AddModal({ onClose, onAdd, onBulkAdd, existing, workstreams }) {
   const [mode, setMode] = useState("single");
-  const [f, setF] = useState({ title: "", workstream: "Marketing Services", size: "M", impact: 3, targetWindow: "Q3 2026", dri: "", problem: "", solution: "" });
+  const [f, setF] = useState({ title: "", workstream: "Marketing Services", effort: "M", impact: 3, targetWindow: "Q3 2026", dri: "", problem: "", solution: "" });
   const [csv, setCsv] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -914,11 +876,9 @@ function AddModal({ onClose, onAdd, onBulkAdd, existing }) {
     const base = f.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "project";
     let id = base, n = 2; while (existing.some((p) => p.id === id)) { id = `${base}-${n++}`; }
     const obj = {
-      id, code: id.toUpperCase(), title: f.title.trim(), workstream: f.workstream.trim(),
-      stakeholder: "", dri: f.dri, targetWindow: f.targetWindow,
-      problem: f.problem, solution: f.solution, success: "",
-      deliverables: [], roles: [], dependsOn: [], openItems: [],
-      impact: Number(f.impact), size: f.size,
+      id, code: nextCode(f.workstream.trim(), existing, id), title: f.title.trim(), workstream: f.workstream.trim(),
+      stakeholder: "", dri: f.dri, targetWindow: f.targetWindow, problem: f.problem, solution: f.solution, success: "",
+      deliverables: [], roles: [], dependsOn: [], openItems: [], impact: Number(f.impact), effort: f.effort,
     };
     onAdd(obj).then(() => onClose()).catch((e) => setErr(e.message));
   };
@@ -932,6 +892,7 @@ function AddModal({ onClose, onAdd, onBulkAdd, existing }) {
   const field = { fontFamily: T.body, fontSize: 13, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, width: "100%" };
   const lbl = { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft, marginBottom: 5, display: "block" };
   const tab = (k, label) => <button onClick={() => { setMode(k); setErr(""); }} style={{ fontFamily: T.body, fontSize: 13, fontWeight: mode === k ? 600 : 500, padding: "7px 14px", background: "none", border: "none", color: mode === k ? T.ink : T.inkSoft, borderBottom: mode === k ? `2px solid ${T.ink}` : "2px solid transparent" }}>{label}</button>;
+  const wsAll = Array.from(new Set([f.workstream, ...workstreams].filter(Boolean)));
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -941,15 +902,19 @@ function AddModal({ onClose, onAdd, onBulkAdd, existing }) {
 
         {mode === "single" ? (
           <>
-            <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "0 0 16px" }}>Fill the essentials — deliverables, team, dependencies, and risks are editable inline on the project once it opens. Type any workstream (new ones are fine).</p>
+            <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "0 0 16px" }}>Fill the essentials — deliverables, team, dependencies, and risks are editable inline on the project once it opens. The project code comes from the workstream.</p>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div><label style={lbl}>TITLE</label><input value={f.title} onChange={(e) => { set("title", e.target.value); setErr(""); }} placeholder="Project title" style={field} /></div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div><label style={lbl}>WORKSTREAM</label><input list="ws-options" value={f.workstream} onChange={(e) => set("workstream", e.target.value)} placeholder="Workstream" style={field} /></div>
+                <div><label style={lbl}>WORKSTREAM</label>
+                  <select value={f.workstream} onChange={(e) => { if (e.target.value === "__new__") { const v = window.prompt("New workstream name:"); if (v && v.trim()) set("workstream", v.trim()); } else set("workstream", e.target.value); }} style={field}>
+                    {wsAll.map((w) => <option key={w} value={w}>{w}</option>)}<option value="__new__">+ New workstream…</option>
+                  </select>
+                </div>
                 <div><label style={lbl}>TARGET</label><select value={f.targetWindow} onChange={(e) => set("targetWindow", e.target.value)} style={field}>{TARGETS.map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div><label style={lbl}>SIZE</label><select value={f.size} onChange={(e) => set("size", e.target.value)} style={field}>{SIZES.map((s) => <option key={s} value={s}>{s} · {SIZE_POINTS[s]}u</option>)}</select></div>
+                <div><label style={lbl}>EFFORT</label><select value={f.effort} onChange={(e) => set("effort", e.target.value)} style={field}>{EFFORTS.map((s) => <option key={s} value={s}>{s} · {EFFORT_POINTS[s]}u</option>)}</select></div>
                 <div><label style={lbl}>IMPACT</label><select value={f.impact} onChange={(e) => set("impact", e.target.value)} style={field}>{[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}</select></div>
               </div>
               <div><label style={lbl}>DRI (optional)</label><input value={f.dri} onChange={(e) => set("dri", e.target.value)} placeholder="Accountable owner" style={field} /></div>
@@ -957,10 +922,7 @@ function AddModal({ onClose, onAdd, onBulkAdd, existing }) {
               <div><label style={lbl}>THE SOLUTION</label><textarea value={f.solution} onChange={(e) => set("solution", e.target.value)} rows={3} placeholder="The approach in plain language" style={{ ...field, resize: "vertical", lineHeight: 1.5 }} /></div>
             </div>
             {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "12px 0 0" }}>{err}</p>}
-            <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
-              <button onClick={submitSingle} style={btnSolid}>Create & edit</button>
-              <button onClick={onClose} style={btnGhost}>Cancel</button>
-            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 18 }}><button onClick={submitSingle} style={btnSolid}>Create & edit</button><button onClick={onClose} style={btnGhost}>Cancel</button></div>
           </>
         ) : (
           <>
@@ -968,12 +930,12 @@ function AddModal({ onClose, onAdd, onBulkAdd, existing }) {
             <div style={{ background: T.paper, border: `1px solid ${T.hairline}`, borderRadius: 10, padding: "12px 14px", marginBottom: 14, fontSize: 12.5, lineHeight: 1.6, color: T.inkSoft }}>
               <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: T.ink, marginBottom: 6 }}>CSV FORMAT</div>
               <div>One row per project. Header columns (any order; extras ignored): <span style={{ fontFamily: T.mono, color: T.ink }}>{CSV_COLUMNS.join(", ")}</span>.</div>
-              <div style={{ marginTop: 6 }}>Only <strong>title</strong> is required. <strong>size</strong> ∈ S/M/L/XL; <strong>impact</strong> 1–5; <strong>workstream</strong> is free text (new ones are fine).</div>
+              <div style={{ marginTop: 6 }}>Only <strong>title</strong> is required. <strong>effort</strong> ∈ XS/S/M/L/XL; <strong>impact</strong> 1–5; <strong>workstream</strong> is free text (new ones fine). The project code is derived from the workstream.</div>
               <div style={{ marginTop: 6 }}>List cells separate items with <code style={codeChip}>|</code> and sub-fields with <code style={codeChip}>::</code> —</div>
               <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
                 <li><strong>deliverables</strong>: <code style={codeChip}>Build X | *Stretch item</code> (prefix <code style={codeChip}>*</code> = stretch)</li>
-                <li><strong>team</strong>: <code style={codeChip}>Business Systems :: Builds it | Empty Cup Digital :: HubSpot</code> (internal & external together)</li>
-                <li><strong>dependsOn</strong>: <code style={codeChip}>SUP-01 :: why it's needed</code> (reference an existing project code)</li>
+                <li><strong>team</strong>: <code style={codeChip}>Business Systems :: Builds it | Empty Cup Digital :: HubSpot</code></li>
+                <li><strong>dependsOn</strong>: <code style={codeChip}>SUP-01 :: why it's needed</code></li>
                 <li><strong>openItems</strong>: <code style={codeChip}>Risk one | Assumption two</code></li>
               </ul>
               <button onClick={() => setCsv(CSV_TEMPLATE)} style={{ ...addBtn, marginTop: 10 }}>Load example row</button>
@@ -981,13 +943,10 @@ function AddModal({ onClose, onAdd, onBulkAdd, existing }) {
             <label style={lbl}>UPLOAD .CSV</label>
             <input type="file" accept=".csv,text/csv" onChange={onFile} style={{ fontSize: 12.5, marginBottom: 10 }} />
             <label style={lbl}>OR PASTE CSV</label>
-            <textarea value={csv} onChange={(e) => { setCsv(e.target.value); setErr(""); }} rows={8} placeholder="title,workstream,size,impact,..." style={{ ...field, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, resize: "vertical" }} />
+            <textarea value={csv} onChange={(e) => { setCsv(e.target.value); setErr(""); }} rows={8} placeholder="title,workstream,effort,impact,..." style={{ ...field, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, resize: "vertical" }} />
             <div style={{ fontSize: 12.5, color: parsed.error ? "#A33D3D" : T.inkSoft, margin: "8px 0 0" }}>{csv.trim() ? (parsed.error || `${parsed.projects.length} project${parsed.projects.length === 1 ? "" : "s"} ready: ${parsed.projects.map((p) => p.title).join(", ")}`) : "Waiting for CSV…"}</div>
             {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "8px 0 0" }}>{err}</p>}
-            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-              <button onClick={submitCsv} disabled={busy || !parsed.projects.length} style={{ ...btnSolid, opacity: busy || !parsed.projects.length ? 0.5 : 1 }}>{busy ? "Importing…" : `Import ${parsed.projects.length || ""} project${parsed.projects.length === 1 ? "" : "s"}`}</button>
-              <button onClick={onClose} style={btnGhost}>Cancel</button>
-            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}><button onClick={submitCsv} disabled={busy || !parsed.projects.length} style={{ ...btnSolid, opacity: busy || !parsed.projects.length ? 0.5 : 1 }}>{busy ? "Importing…" : `Import ${parsed.projects.length || ""} project${parsed.projects.length === 1 ? "" : "s"}`}</button><button onClick={onClose} style={btnGhost}>Cancel</button></div>
           </>
         )}
       </div>
@@ -1004,11 +963,9 @@ const cardText = { margin: 0, fontSize: 13, lineHeight: 1.55, color: T.ink };
 const listReset = { margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 };
 const liRow = { display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, lineHeight: 1.5 };
 const linkBtn = { background: "none", border: "none", fontWeight: 600, color: T.ink, fontSize: 13, textDecoration: "underline", padding: 0, fontFamily: T.body };
-const xBtn = { background: "none", border: "none", color: T.inkSoft, fontSize: 13, padding: "2px 4px", flexShrink: 0 };
+const xBtn = { background: "none", border: "none", color: T.inkSoft, fontSize: 12, padding: "2px 4px", flexShrink: 0 };
 const addBtn = { alignSelf: "flex-start", background: "none", border: `1px dashed ${T.hairline}`, color: T.inkSoft, fontFamily: T.body, fontSize: 12, fontWeight: 500, padding: "5px 10px", borderRadius: 8 };
 const codeChip = { fontFamily: T.mono, fontSize: 11.5, background: T.hairlineSoft, color: T.ink, padding: "1px 5px", borderRadius: 4 };
 
-function SectionTitle({ children }) {
-  return <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{children}</span>;
-}
+function SectionTitle({ children }) { return <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{children}</span>; }
 function Empty() { return <div style={{ textAlign: "center", padding: "60px 20px", color: T.inkSoft, fontSize: 14 }}>Nothing here yet.</div>; }

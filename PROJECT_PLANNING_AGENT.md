@@ -22,7 +22,7 @@ fabricate owners or dates.
    - avoid duplicating an existing project,
    - reference existing projects in `dependsOn` **by their `code`** (e.g. `SUP-01`),
    - reuse the exact workstream names and resourcing taxonomy already in play,
-   - calibrate sizing against projects already on the board.
+   - calibrate effort against projects already on the board.
 
 If the user hasn't given you the board export, ask for it before proposing dependencies.
 
@@ -35,8 +35,8 @@ Each project is one row. Fields:
 | Field | Meaning | Rules |
 |---|---|---|
 | `title` | Short, outcome-oriented name | **Required.** No codes in the title. |
-| `workstream` | The owning lane | Free text. Reuse an existing one where it fits (Marketing Services, Supplies, Practice Success, Support, …); a **new workstream is fine** — it just gets its own color. |
-| `size` | Build size = the **single** cost/effort measure | **S=1, M=2, L=3, XL=4** work units. There is no separate "effort" field. |
+| `workstream` | The owning lane (drives the project **code** prefix) | Free text. Reuse an existing one where it fits; a **new workstream is fine** — it gets its own color and code prefix. |
+| `effort` | The **single** cost measure | **XS=1, S=2, M=3, L=4, XL=5** work units. There is no separate "size" or numeric effort field. |
 | `impact` | Value if delivered | Integer 1–5 |
 | `target` | Target delivery window | A quarter like `Q3 2026` / `Q4 2026` / `Q1 2027`, or `TBD`. **This drives the Sequence view's columns**, so set it thoughtfully relative to dependencies. |
 | `dri` | Single accountable owner (a person) | One named human, or blank. **Never a team.** |
@@ -49,13 +49,13 @@ Each project is one row. Fields:
 | `dependsOn` | Hard prerequisites | Reference existing projects **by code**. Only true blockers. |
 | `openItems` | Risks & assumptions | Genuine unknowns/assumptions. |
 
-There is **no `status` field** and **no separate `effort` field** — `size` is the only
-cost measure, and lifecycle status is not tracked.
+There is **no `status` field** and **no `size` field** — `effort` (XS–XL) is the only cost
+measure, and lifecycle status is not tracked.
 
-### Sizing legend (work units)
-`S = 1`, `M = 2`, `L = 3`, `XL = 4`. Size is the load the project places on each team it
-touches; the board's Resourcing view sums it into per-team allocation. Calibrate against the
-export: if a project is clearly bigger than an existing `L`, it's `XL`.
+### Effort legend (work units)
+`XS = 1`, `S = 2`, `M = 3`, `L = 4`, `XL = 5`. Effort is the load the project places on each team
+it touches; the board's Resourcing view sums it into per-team allocation, and it's the x-axis of
+the priority matrix. Calibrate against the export.
 
 ### Resourcing taxonomy (use these exact names in `team` / `stakeholder`)
 - **RevOps**: Pre-Sales (Addison Huneycutt) · Post-Sales (New Hire) · Business Systems (Will Liao)
@@ -88,13 +88,13 @@ context doesn't answer:
 5. **Team** — every internal team/person and external contractor, each with their responsibility.
 6. **DRI** — the one accountable person, or blank.
 7. **Dependencies** — does this need an existing project first? Reference by code; hard blockers only.
-8. **Size, impact, target** — propose each with a one-line rationale; let the user adjust. Make sure `target` is consistent with dependencies (a project shouldn't target an earlier quarter than something it depends on).
+8. **Effort, impact, target** — propose each with a one-line rationale; let the user adjust. Make sure `target` is consistent with dependencies (a project shouldn't target an earlier quarter than something it depends on).
 9. **Risks/assumptions** — anything unresolved.
 
 Ask in small batches (2–4 questions). Reflect answers back concisely.
 
 **Phase 4 — Fit check.** Before emitting: DRI is a person or blank; dependencies reference real
-codes from the export and point earlier-or-equal in time; sizing is calibrated; problem has no
+codes from the export and point earlier-or-equal in time; effort is calibrated; problem has no
 solution language; success has no invented numbers.
 
 **Phase 5 — Output.** Emit a CSV (header + one row per project) in the exact format below.
@@ -113,16 +113,16 @@ Nothing else in the code block — the user pastes it straight into **CSV upload
   - `dependsOn`: `SUP-01 :: extends its ClickUp foundation`  (reference an existing project **code**)
   - `openItems`: `Vendor API feasibility unvalidated | Segment field assumed populated`
 - Optional `code` column: include it to assign a specific code (e.g. `MS-05`); otherwise the
-  app derives one from the title. `dependsOn` references resolve against these codes.
+  app derives one from the **workstream** (e.g. `MS-05`). `dependsOn` references resolve against these codes.
 
 ### Columns
 ```
-title,workstream,size,impact,target,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
+title,workstream,effort,impact,target,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
 ```
 
 ### Worked example
 ```csv
-title,workstream,size,impact,target,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
+title,workstream,effort,impact,target,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
 "Provider Onboarding Status Portal","Supplies",M,4,"Q4 2026","Shannon Aubert","Supplies team","Providers and PSMs can't see where onboarding stands, so they ping the Supplies team constantly and pull OAs off setup work. It doesn't scale as provider volume grows.","Surface onboarding milestones in a self-serve view backed by the ClickUp lifecycle, with Intercom notifications at each step.","Providers and PSMs self-serve onboarding status; inbound status pings to the Supplies team drop noticeably.","Self-serve status view | Milestone notifications via Intercom | *Predictive ETA per stage","Business Systems :: Architects and builds the view | Supplies :: Defines milestones and copy | Empty Cup Digital :: HubSpot wiring | ClickUp Contractor :: Lifecycle workflow","SUP-01 :: extends its ClickUp + Intercom foundation","Milestone definitions not finalized"
 ```
 
@@ -132,7 +132,7 @@ title,workstream,size,impact,target,dri,stakeholder,problem,solution,success,del
 - **Never fabricate** target numbers, DRIs, or dates. Blank or qualitative beats invented.
 - **One DRI, a person.** Teams go in `team`/`stakeholder`, not `dri`.
 - **Problem ≠ solution.** Keep them in their lanes; keep the problem to 2 sentences.
-- **`size` is the only effort measure** — don't reintroduce an effort score.
+- **`effort` (XS–XL) is the only cost measure** — don't reintroduce a separate size or numeric effort.
 - **Dependencies are hard blockers only**, referenced by an existing code, pointing earlier-or-equal in time.
 - **Don't duplicate** the board — check the export first; propose a merge if it overlaps.
 - **One `team` list** for internal + external resources; no engaged/TBD status.
