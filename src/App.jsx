@@ -359,14 +359,20 @@ function Matrix({ projects, onOpen }) {
   const seen = {};
   const pts = projects.map((p) => {
     const u = projectLoad(p); const key = `${u}-${p.impact}`; const n = seen[key] || 0; seen[key] = n + 1;
-    return { p, u, dx: (n % 2 === 0 ? 1 : -1) * Math.ceil(n / 2) * 26, dy: n * 6 };
+    const dx = (n % 2 === 0 ? 1 : -1) * Math.ceil(n / 2) * 26, dy = n * 6;
+    return { p, u, dx, dy, cx: x(u) + dx, cy: y(p.impact) + dy };
   });
+  const pos = Object.fromEntries(pts.map((t) => [t.p.id, t]));
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 260px", gap: 18, alignItems: "start" }}>
       <div>
-        <h2 style={{ ...h2Style, marginBottom: 10 }}>Impact vs. effort</h2>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+          <h2 style={h2Style}>Impact vs. effort</h2>
+          <span style={{ fontSize: 12, color: T.inkSoft }}><span style={{ color: "#C0463E", fontWeight: 700 }}>◯→</span> depends on a prerequisite</span>
+        </div>
         <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 10, overflowX: "auto" }}>
           <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, display: "block" }} role="img" aria-label="Impact versus effort matrix">
+            <defs><marker id="matrixArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#C0463E" /></marker></defs>
             <rect x={PAD} y={30} width={(W - PAD - 20) * (2.5 / 5)} height={(H - PAD - 30) / 2} fill="#EDF6F0" rx={8} />
             {[1, 2, 3, 4, 5].map((n) => (<g key={`y${n}`}><line x1={PAD} y1={y(n)} x2={W - 20} y2={y(n)} stroke={T.hairlineSoft} /><text x={PAD - 14} y={y(n) + 4} textAnchor="end" fontSize="11" fill={T.inkSoft} fontFamily={T.mono}>{n}</text></g>))}
             {[1, 2, 3, 4, 5].map((u) => (<g key={`x${u}`}><line x1={x(u)} y1={30} x2={x(u)} y2={H - PAD} stroke={T.hairlineSoft} /><text x={x(u)} y={H - PAD + 20} textAnchor="middle" fontSize="11" fill={T.inkSoft} fontFamily={T.mono}>{EFFORTS[u - 1]}</text></g>))}
@@ -377,11 +383,19 @@ function Matrix({ projects, onOpen }) {
             <text x={W - 32} y={H - PAD - 12} fontSize="11" fontFamily={T.mono} fontWeight="600" fill="#A33D3D" letterSpacing="1" textAnchor="end">RECONSIDER</text>
             <text x={(PAD + W - 20) / 2} y={H - 10} textAnchor="middle" fontSize="12" fill={T.ink} fontFamily={T.body} fontWeight="600">Effort →</text>
             <text x={16} y={(30 + H - PAD) / 2} fontSize="12" fill={T.ink} fontFamily={T.body} fontWeight="600" transform={`rotate(-90 16 ${(30 + H - PAD) / 2})`} textAnchor="middle">Impact →</text>
-            {pts.map(({ p, u, dx, dy }) => {
-              const ws = wsMeta(p.workstream); const cx = x(u) + dx, cy = y(p.impact) + dy;
+            {/* dependency arrows: prerequisite → dependent (drawn under the dots) */}
+            {pts.flatMap(({ p }) => (p.dependsOn || []).map((d, k) => {
+              const a = pos[d.id], b = pos[p.id];
+              if (!a || !b) return null;
+              const vx = b.cx - a.cx, vy = b.cy - a.cy; const len = Math.hypot(vx, vy) || 1; const ux = vx / len, uy = vy / len;
+              return <line key={p.id + "-dep" + k} x1={a.cx + ux * 15} y1={a.cy + uy * 15} x2={b.cx - ux * 18} y2={b.cy - uy * 18} stroke="#C0463E" strokeWidth="1.6" opacity="0.75" markerEnd="url(#matrixArrow)" />;
+            }))}
+            {pts.map(({ p, cx, cy }) => {
+              const ws = wsMeta(p.workstream); const dependent = (p.dependsOn || []).length > 0;
               return (
                 <g key={p.id} onClick={() => onOpen(p.id)} style={{ cursor: "pointer" }}>
                   <circle cx={cx} cy={cy} r={13} fill={ws.color} opacity="0.92" /><circle cx={cx} cy={cy} r={13} fill="none" stroke="#fff" strokeWidth="2" />
+                  {dependent && <circle cx={cx} cy={cy} r={17} fill="none" stroke="#C0463E" strokeWidth="2" />}
                   <text x={cx} y={cy - 19} textAnchor="middle" fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.ink}>{p.code}</text>
                 </g>
               );
