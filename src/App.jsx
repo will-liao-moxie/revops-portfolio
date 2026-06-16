@@ -127,11 +127,15 @@ const TEMPLATE_JSON = `{
   "success": "Measurable outcome: baseline, target, timeframe, who measures it.",
   "dependsOn": [{ "id": "sup-01", "note": "Why this is a prerequisite" }],
   "openItems": ["Unresolved questions or risks"],
+  "dri": "Accountable owner (a person), or leave blank",
+  "targetWindow": "Q3 2026",
   "impact": 3,
   "effort": 3,
   "size": "M",
   "status": "Scoping"
 }`;
+
+const TARGETS = ["TBD", "Q3 2026", "Q4 2026", "Q1 2027", "Q2 2027", "H2 2026", "2027"];
 
 /* ---------- edit lock ---------- */
 const EDIT_PW = "12345678";
@@ -287,6 +291,15 @@ export default function App() {
         * { box-sizing: border-box; }
         button { cursor: pointer; }
         button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid ${T.ink}; outline-offset: 2px; }
+        .proj-drawer { width: min(680px, 100%); }
+        .proj-grid { display: flex; flex-direction: column; gap: 16px; }
+        .proj-wide-only { display: none !important; }
+        @media (min-width: 1080px) {
+          .proj-drawer { width: min(1120px, 96vw); }
+          .proj-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); gap: 20px; align-items: start; }
+          .proj-narrow-only { display: none !important; }
+          .proj-wide-only { display: block !important; }
+        }
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
       `}</style>
 
@@ -599,15 +612,36 @@ function Detail({ p, byId, unlocked, onClose, onUpdate, onRemove, onOpen }) {
   const deps = p.dependsOn || [];
   const committed = (p.deliverables || []).filter((d) => !d.stretch);
   const stretch = (p.deliverables || []).filter((d) => d.stretch);
+  const contractors = p.contractors || [];
+  // de-dup: contractors live in their own rail card, so drop them from "Who does what"
+  const contractorNames = contractors.map((c) => (c.name || "").toLowerCase());
+  const roles = (p.roles || []).filter((r) => {
+    const w = (r.who || "").toLowerCase();
+    if (w.includes("contractor")) return false;
+    return !contractorNames.some((n) => n && w.includes(n));
+  });
+
+  const targetCtl = unlocked
+    ? <MiniSelect value={p.targetWindow || "TBD"} options={TARGETS} onChange={(v) => onUpdate({ targetWindow: v })} />
+    : <span style={{ fontSize: 13, fontWeight: 600 }}>{p.targetWindow || "TBD"}</span>;
+
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(680px, 100%)", height: "100%", background: T.bg, overflowY: "auto", boxShadow: "-12px 0 40px rgba(28,37,33,.18)", fontFamily: T.body }}>
-        {/* header */}
+      <div className="proj-drawer" onClick={(e) => e.stopPropagation()} style={{ height: "100%", background: T.bg, overflowY: "auto", boxShadow: "-12px 0 40px rgba(28,37,33,.18)", fontFamily: T.body }}>
+        {/* header band — full width, sticky */}
         <div style={{ padding: "22px 26px 18px", background: T.surface, borderBottom: `1px solid ${T.hairline}`, position: "sticky", top: 0, zIndex: 2 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
             <div>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}><Eyebrow color={ws.color}>{p.code}</Eyebrow><Chip bg={ws.soft} fg={ws.color}>{p.workstream}</Chip></div>
               <h2 style={{ fontFamily: T.display, fontWeight: 800, fontSize: 24, margin: "8px 0 0", letterSpacing: "-0.02em", lineHeight: 1.1 }}>{p.title}</h2>
+              {(unlocked || p.dri) && (
+                <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 7 }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft }}>DRI</span>
+                  {unlocked
+                    ? <TextEdit value={p.dri} placeholder="Add accountable owner" onCommit={(v) => onUpdate({ dri: v })} />
+                    : <span style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{p.dri}</span>}
+                </div>
+              )}
             </div>
             <button onClick={onClose} aria-label="Close" style={{ background: "none", border: `1px solid ${T.hairline}`, borderRadius: 8, width: 32, height: 32, fontSize: 16, color: T.inkSoft, flexShrink: 0 }}>✕</button>
           </div>
@@ -617,104 +651,145 @@ function Detail({ p, byId, unlocked, onClose, onUpdate, onRemove, onOpen }) {
             <Stat label="Impact">{unlocked ? <MiniSelect value={p.impact} options={[1, 2, 3, 4, 5]} onChange={(v) => onUpdate({ impact: Number(v) })} /> : <ScoreDots value={p.impact} color={ws.color} />}</Stat>
             <Stat label="Effort">{unlocked ? <MiniSelect value={p.effort} options={[1, 2, 3, 4, 5]} onChange={(v) => onUpdate({ effort: Number(v) })} /> : <ScoreDots value={p.effort} color={T.ink} />}</Stat>
             <Stat label="Size">{unlocked ? <MiniSelect value={p.size || "M"} options={SIZES} onChange={(v) => onUpdate({ size: v })} /> : <SizeChip size={p.size} ws={ws} />}</Stat>
+            <Stat label="Target" className="proj-wide-only">{targetCtl}</Stat>
+          </div>
+          {/* target as a caption on narrow screens (no 5th cell) */}
+          <div className="proj-narrow-only" style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8 }}>
+            <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft }}>TARGET</span>{targetCtl}
           </div>
         </div>
 
-        <div style={{ padding: "20px 26px 40px", display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* problem / solution cards */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        {/* body: 60/40 main+rail at >=1080px, single stacked column below */}
+        <div className="proj-grid" style={{ padding: "20px 26px 6px" }}>
+          {/* MAIN reading column */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
             <AccentCard accent="#C0463E" icon="!" title="The problem">{p.problem}</AccentCard>
             <AccentCard accent={ws.color} icon="→" title="The solution">{p.solution}</AccentCard>
-          </div>
 
-          {/* success callout */}
-          <div style={{ background: "#EDF6F0", border: "1px solid #C9E4D6", borderRadius: 12, padding: "14px 16px" }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-              <span style={{ fontSize: 14 }}>🎯</span><SectionTitle>Definition of success</SectionTitle>
-            </div>
-            <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.ink }}>{p.success}</p>
-          </div>
-
-          {/* deliverables */}
-          <Panel title="What's being built">
-            <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
-              {committed.map((d, i) => (
-                <li key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, lineHeight: 1.5 }}>
-                  <span style={{ color: ws.color, fontWeight: 700, marginTop: 1 }}>✓</span><span>{d.text}</span>
-                </li>
-              ))}
-            </ul>
-            {stretch.length > 0 && (
-              <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px dashed ${T.hairline}` }}>
-                <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: "#9A6A12", marginBottom: 8 }}>STRETCH — IF TIME ALLOWS</div>
-                <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
-                  {stretch.map((d, i) => (
-                    <li key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, lineHeight: 1.5, color: T.inkSoft }}>
-                      <span style={{ color: "#C9A24B", marginTop: 1 }}>○</span><span>{d.text}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </Panel>
-
-          {/* roles */}
-          <Panel title="Who does what">
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {(p.roles || []).map((r, i) => (
-                <div key={i} style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 13 }}>
-                  <Avatar name={r.who} color={ws.color} />
-                  <div><span style={{ fontWeight: 600 }}>{r.who}</span><div style={{ color: T.inkSoft, lineHeight: 1.45, marginTop: 1 }}>{r.what}</div></div>
+            <Panel title={`What's being built · ${committed.length}`}>
+              <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+                {committed.map((d, i) => (
+                  <li key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, lineHeight: 1.5 }}>
+                    <span style={{ color: ws.color, fontWeight: 700, marginTop: 1 }}>✓</span><span>{d.text}</span>
+                  </li>
+                ))}
+              </ul>
+              {stretch.length > 0 && (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px dashed ${T.hairline}` }}>
+                  <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: "#9A6A12", marginBottom: 8 }}>STRETCH — IF TIME ALLOWS</div>
+                  <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+                    {stretch.map((d, i) => (
+                      <li key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, lineHeight: 1.5, color: T.inkSoft }}>
+                        <span style={{ color: "#C9A24B", marginTop: 1 }}>○</span><span>{d.text}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-              ))}
-            </div>
-          </Panel>
+              )}
+            </Panel>
 
-          {/* dependencies */}
-          {deps.length > 0 && (
-            <Panel title="Depends on">
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {deps.map((d, i) => {
-                  const dep = byId[d.id];
-                  return (
-                    <div key={i} style={{ fontSize: 13, lineHeight: 1.5, display: "flex", gap: 8, alignItems: "baseline" }}>
-                      <span style={{ color: "#A33D3D", fontWeight: 700 }}>↳</span>
-                      <span>
-                        {dep ? <button onClick={() => onOpen(dep.id)} style={{ background: "none", border: "none", fontWeight: 600, color: T.ink, fontSize: 13, textDecoration: "underline", padding: 0, fontFamily: T.body }}>{dep.code} — {dep.title}</button> : <span style={{ fontWeight: 600 }}>Outside this portfolio</span>}
-                        {d.note && <span style={{ color: T.inkSoft }}> — {d.note}</span>}
-                      </span>
+            <div style={{ background: "#EDF6F0", border: "1px solid #C9E4D6", borderRadius: 12, padding: "14px 16px" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 14 }}>🎯</span><SectionTitle>Definition of success</SectionTitle>
+                {p.baselineTBD && <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", padding: "2px 7px", borderRadius: 999, background: "#FBEAEA", color: "#A33D3D" }}>BASELINE TBD</span>}
+              </div>
+              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.ink }}>{p.success}</p>
+            </div>
+          </div>
+
+          {/* METADATA RAIL */}
+          <aside style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+            {contractors.length > 0 && (
+              <Panel title="Resourcing">
+                <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                  {contractors.map((c, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600 }} title={c.scope}>{c.name}</span>
+                      <StatusTag status={c.status} />
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
+              </Panel>
+            )}
+
+            <Panel title="Who does what">
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {roles.map((r, i) => (
+                  <div key={i} style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 13 }}>
+                    <Avatar name={r.who} color={ws.color} />
+                    <div><span style={{ fontWeight: 600 }}>{r.who}</span><div style={{ color: T.inkSoft, lineHeight: 1.45, marginTop: 1 }}>{r.what}</div></div>
+                  </div>
+                ))}
               </div>
             </Panel>
-          )}
 
-          {/* open items */}
-          {(p.openItems || []).length > 0 && (
-            <div style={{ background: "#FFF8EC", border: "1px solid #EFDFBC", borderRadius: 12, padding: "12px 16px" }}>
-              <SectionTitle>Open items</SectionTitle>
-              <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: "#6E5612" }}>{p.openItems.map((o, i) => <li key={i}>{o}</li>)}</ul>
-            </div>
-          )}
+            {deps.length > 0 && (
+              <Panel title="Depends on">
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {deps.map((d, i) => {
+                    const dep = byId[d.id];
+                    return (
+                      <div key={i} style={{ fontSize: 13, lineHeight: 1.5, display: "flex", gap: 8, alignItems: "baseline" }}>
+                        <span style={{ color: "#A33D3D", fontWeight: 700 }}>↳</span>
+                        <span>
+                          {dep ? <button onClick={() => onOpen(dep.id)} style={{ background: "none", border: "none", fontWeight: 600, color: T.ink, fontSize: 13, textDecoration: "underline", padding: 0, fontFamily: T.body }}>{dep.code} — {dep.title}</button> : <span style={{ fontWeight: 600 }}>Outside this portfolio</span>}
+                          {d.note && <span style={{ color: T.inkSoft }}> — {d.note}</span>}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Panel>
+            )}
 
-          <div style={{ fontSize: 12.5, color: T.inkSoft, padding: "0 2px" }}>
-            <strong style={{ color: T.ink }}>Stakeholder</strong> · {p.stakeholder} &nbsp;&nbsp; <strong style={{ color: T.ink }}>RevOps role</strong> · {p.revopsRole}
-          </div>
+            {(p.openItems || []).length > 0 && (
+              <div style={{ background: "#FFF8EC", border: "1px solid #EFDFBC", borderRadius: 12, padding: "12px 16px" }}>
+                <SectionTitle>Risks & assumptions</SectionTitle>
+                <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: "#6E5612" }}>{p.openItems.map((o, i) => <li key={i}>{o}</li>)}</ul>
+              </div>
+            )}
 
-          {unlocked && <button onClick={onRemove} style={{ alignSelf: "flex-start", fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "9px 14px", borderRadius: 8, background: "none", border: "1px solid #D9A0A0", color: "#A33D3D" }}>Remove project</button>}
+            <Panel title="Ownership">
+              <div style={{ fontSize: 13, lineHeight: 1.5 }}>
+                {p.dri && <div style={{ marginBottom: 4 }}><span style={{ color: T.inkSoft }}>DRI · </span><span style={{ fontWeight: 600 }}>{p.dri}</span></div>}
+                <div><span style={{ color: T.inkSoft }}>Stakeholder · </span><span style={{ fontWeight: 600 }}>{p.stakeholder}</span></div>
+              </div>
+            </Panel>
+          </aside>
         </div>
+
+        {unlocked && (
+          <div style={{ padding: "8px 26px 32px" }}>
+            <button onClick={onRemove} style={{ fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "9px 14px", borderRadius: 8, background: "none", border: "1px solid #D9A0A0", color: "#A33D3D" }}>Remove project</button>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function Stat({ label, children }) {
+function Stat({ label, children, className }) {
   return (
-    <div style={{ flex: "1 1 0", minWidth: 90, padding: "9px 12px", background: T.surface, borderRight: `1px solid ${T.hairlineSoft}` }}>
+    <div className={className} style={{ flex: "1 1 0", minWidth: 88, padding: "9px 12px", background: T.surface, borderRight: `1px solid ${T.hairlineSoft}` }}>
       <div style={{ fontFamily: T.mono, fontSize: 9.5, letterSpacing: "0.1em", color: T.inkSoft, marginBottom: 5 }}>{label.toUpperCase()}</div>
       <div style={{ display: "flex", alignItems: "center", minHeight: 22 }}>{children}</div>
     </div>
+  );
+}
+function StatusTag({ status }) {
+  const engaged = (status || "").toLowerCase() === "engaged";
+  return (
+    <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", padding: "2px 8px", borderRadius: 999, background: engaged ? "#E4F3EF" : "#FBEAEA", color: engaged ? "#0E8A74" : "#A33D3D", whiteSpace: "nowrap" }}>
+      {(status || "TBD").toUpperCase()}
+    </span>
+  );
+}
+function TextEdit({ value, placeholder, onCommit }) {
+  const [v, setV] = useState(value || "");
+  useEffect(() => { setV(value || ""); }, [value]);
+  return (
+    <input value={v} placeholder={placeholder} onChange={(e) => setV(e.target.value)} onBlur={() => { if (v !== (value || "")) onCommit(v); }}
+      style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, padding: "3px 7px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, minWidth: 150 }} />
   );
 }
 function AccentCard({ accent, icon, title, children }) {
@@ -755,6 +830,7 @@ function AddModal({ onClose, onAdd, existing }) {
       if (existing.some((p) => p.id === obj.id)) { setErr(`A project with id "${obj.id}" already exists — pick a new code.`); return; }
       obj.code = obj.code || obj.id.toUpperCase();
       obj.impact = obj.impact || 3; obj.effort = obj.effort || 3; obj.size = obj.size || "M"; obj.status = obj.status || "Scoping";
+      obj.targetWindow = obj.targetWindow || "TBD"; obj.dri = obj.dri || "";
       onAdd(obj).then(() => onClose()).catch((e) => setErr(e.message));
     } catch { setErr("That isn't valid JSON — check for trailing commas or missing quotes."); }
   };
