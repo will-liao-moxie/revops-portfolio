@@ -230,6 +230,14 @@ export default function App() {
     try { await apiWrite("/api/projects", "DELETE", { id }); setSelectedId(null); await refresh(); }
     catch (e) { window.alert(`Couldn't remove: ${e.message}`); }
   };
+  const exportCsv = () => {
+    const csv = projectsToCsv(projects);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "revops-portfolio.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
   const setCapacity = async (label, value) => {
     const next = { ...capacities, [label]: value };
     setCapacities(next);
@@ -267,6 +275,7 @@ export default function App() {
             <p style={{ margin: "8px 0 0", fontSize: 13.5, color: T.inkSoft, maxWidth: 560 }}>Scope, priority, sequencing, and resourcing for the RevOps project portfolio — one place.</p>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={exportCsv} disabled={!projects.length} title="Download the whole portfolio as CSV" style={{ ...btnGhost, opacity: projects.length ? 1 : 0.5 }}>↓ Export CSV</button>
             <button onClick={toggleLock} title={unlocked ? "Lock editing" : "Unlock editing"} style={btnGhost}>{unlocked ? "🔓 Editing" : "🔒 Locked"}</button>
             {unlocked && <button onClick={() => setShowAdd(true)} style={btnSolid}>+ Add project</button>}
           </div>
@@ -950,17 +959,27 @@ function csvToProjects(text, existing) {
   const used = new Set(existing.map((p) => p.id));
   const items = (s) => (s ? s.split("|").map((x) => x.trim()).filter(Boolean) : []);
   const num = (v, d) => { const n = Number(v); return n >= 1 && n <= 5 ? n : d; };
-  const out = [];
+  const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "project";
 
+  // pass 1: assign ids + codes so cross-row dependsOn can resolve
+  const raw = [];
   for (let k = 1; k < rows.length; k++) {
     const r = rows[k];
     const title = at(r, "title"); if (!title) continue;
-    let ws = at(r, "workstream"); if (!WORKSTREAMS.includes(ws)) ws = "Other";
-    const base = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "project";
+    const providedCode = at(r, "code");
+    const base = slug(providedCode || title);
     let id = base, n = 2; while (used.has(id)) id = `${base}-${n++}`; used.add(id);
+    const code = (providedCode || id).toUpperCase();
+    codeToId[code.toLowerCase()] = id; codeToId[id.toLowerCase()] = id;
+    raw.push({ r, id, code, title });
+  }
+
+  // pass 2: build full records
+  const out = raw.map(({ r, id, code, title }) => {
+    let ws = at(r, "workstream"); if (!WORKSTREAMS.includes(ws)) ws = "Other";
     const size = (at(r, "size") || "M").toUpperCase();
-    out.push({
-      id, code: id.toUpperCase(), title, workstream: ws,
+    return {
+      id, code, title, workstream: ws,
       dri: at(r, "dri"), targetWindow: at(r, "target") || "TBD", stakeholder: at(r, "stakeholder"),
       problem: at(r, "problem"), solution: at(r, "solution"), success: at(r, "success"),
       deliverables: items(at(r, "deliverables")).map((t) => t.startsWith("*") ? { text: t.slice(1).trim(), stretch: true } : { text: t, stretch: false }),
@@ -970,9 +989,31 @@ function csvToProjects(text, existing) {
       openItems: items(at(r, "openitems")),
       teams: [], impact: num(at(r, "impact"), 3), effort: num(at(r, "effort"), 3),
       size: SIZES.includes(size) ? size : "M", status: at(r, "status") || "Scoping",
-    });
-  }
+    };
+  });
   return { projects: out, error: out.length ? "" : "No rows with a title were found." };
+}
+
+/* ---------- CSV export ---------- */
+function csvCell(v) { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }
+function projectsToCsv(projects) {
+  const byId = Object.fromEntries(projects.map((p) => [p.id, p]));
+  const cols = ["code", ...CSV_COLUMNS];
+  const lines = [cols.join(",")];
+  projects.forEach((p) => {
+    const cell = {
+      code: p.code || "", title: p.title || "", workstream: p.workstream || "", size: p.size || "M",
+      impact: p.impact ?? "", effort: p.effort ?? "", target: p.targetWindow || "", status: p.status || "",
+      dri: p.dri || "", stakeholder: p.stakeholder || "", problem: p.problem || "", solution: p.solution || "", success: p.success || "",
+      deliverables: (p.deliverables || []).map((d) => (d.stretch ? "*" : "") + d.text).join(" | "),
+      roles: (p.roles || []).map((r) => `${r.who} :: ${r.what}`).join(" | "),
+      contractors: (p.contractors || []).map((c) => `${c.name} :: ${c.scope || ""} :: ${c.status || "TBD"}`).join(" | "),
+      dependson: (p.dependsOn || []).map((d) => `${byId[d.id] ? byId[d.id].code : d.id} :: ${d.note || ""}`).join(" | "),
+      openitems: (p.openItems || []).join(" | "),
+    };
+    lines.push(cols.map((c) => csvCell(cell[c.toLowerCase()])).join(","));
+  });
+  return lines.join("\n");
 }
 
 /* ---------- ADD MODAL (form or CSV) ---------- */
