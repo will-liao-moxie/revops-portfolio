@@ -18,8 +18,9 @@ export default async function handler(req, res) {
         return res.status(409).json({ error: `A project with id "${body.id}" already exists — pick a new code` });
       }
       const project = { impact: 3, effort: "M", ...body };
-      await saveProjects([...projects, project]);
-      return res.status(200).json({ ok: true });
+      const next = [...projects, project];
+      await saveProjects(next);
+      return res.status(200).json({ ok: true, projects: next });
     }
 
     if (req.method === "PATCH") {
@@ -30,7 +31,7 @@ export default async function handler(req, res) {
       if (idx < 0) return res.status(404).json({ error: `Project "${id}" not found` });
       projects[idx] = { ...projects[idx], ...patch };
       await saveProjects(projects);
-      return res.status(200).json({ ok: true });
+      return res.status(200).json({ ok: true, projects });
     }
 
     if (req.method === "DELETE") {
@@ -42,7 +43,7 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: `Project "${id}" not found` });
       }
       await saveProjects(filtered);
-      return res.status(200).json({ ok: true });
+      return res.status(200).json({ ok: true, projects: filtered });
     }
 
     return res.status(405).json({ error: "Method not allowed" });

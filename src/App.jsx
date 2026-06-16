@@ -229,14 +229,14 @@ export default function App() {
     let full = patch;
     if ("workstream" in patch) full = { ...patch, code: nextCode(patch.workstream, projects, id) };
     setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, ...full } : p)));
-    try { await apiWrite("/api/projects", "PATCH", { id, ...full }); }
+    try { const res = await apiWrite("/api/projects", "PATCH", { id, ...full }); if (res.projects) setProjects(res.projects); }
     catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
   };
-  const addProject = async (proj) => { await apiWrite("/api/projects", "POST", proj); await refresh(); setSelectedId(proj.id); };
-  const addProjects = async (list) => { for (const proj of list) { await apiWrite("/api/projects", "POST", proj); } await refresh(); };
+  const addProject = async (proj) => { const res = await apiWrite("/api/projects", "POST", proj); if (res.projects) setProjects(res.projects); else await refresh(); setSelectedId(proj.id); };
+  const addProjects = async (list) => { let res; for (const proj of list) { res = await apiWrite("/api/projects", "POST", proj); } if (res && res.projects) setProjects(res.projects); else await refresh(); };
   const removeProject = async (id) => {
     if (!window.confirm("Remove this project from the portfolio?")) return;
-    try { await apiWrite("/api/projects", "DELETE", { id }); setSelectedId(null); await refresh(); }
+    try { const res = await apiWrite("/api/projects", "DELETE", { id }); setSelectedId(null); if (res.projects) setProjects(res.projects); else await refresh(); }
     catch (e) { window.alert(`Couldn't remove: ${e.message}`); }
   };
   const exportCsv = () => {
