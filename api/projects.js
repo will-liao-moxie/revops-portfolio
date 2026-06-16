@@ -17,7 +17,7 @@ export default async function handler(req, res) {
       if (projects.some((p) => p.id === body.id)) {
         return res.status(409).json({ error: `A project with id "${body.id}" already exists — pick a new code` });
       }
-      const project = { status: "Scoping", impact: 3, effort: 3, ...body };
+      const project = { impact: 3, size: "M", ...body };
       await saveProjects([...projects, project]);
       return res.status(200).json({ ok: true });
     }
