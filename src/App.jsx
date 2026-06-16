@@ -26,7 +26,7 @@ const WS = {
   "Support": { color: "#B5485D", soft: "#F9EAEE", code: "SPT" },
   "Other": { color: "#54616B", soft: "#EBEFF1", code: "OTH" },
 };
-
+const WORKSTREAMS = Object.keys(WS);
 const STATUSES = ["Scoping", "Proposed", "Approved", "In flight", "Blocked", "Done"];
 
 /* sizing — build load each project places on the teams it touches */
@@ -34,6 +34,7 @@ const SIZES = ["S", "M", "L", "XL"];
 const SIZE_POINTS = { S: 1, M: 2, L: 3, XL: 4 };
 const SIZE_LABEL = { S: "Small", M: "Medium", L: "Large", XL: "X-Large" };
 const DEFAULT_CAP = 6;
+const TARGETS = ["TBD", "Q3 2026", "Q4 2026", "Q1 2027", "Q2 2027", "H2 2026", "2027"];
 
 /* ---------- resourcing taxonomy ---------- */
 const ORG = [
@@ -105,37 +106,9 @@ const GLOSSARY = [
   ["Snowflake / Data Warehouse", "Central database where data from all systems is combined for reporting"],
   ["Custom object", "A new record type added to HubSpot to track something it doesn't track by default"],
   ["Stretch", "Valuable-if-time-allows scope. Not a commitment; the project succeeds without it"],
-  ["Size (S–XL)", "The build load a project places on each team it touches: S=1 to XL=4 capacity points"],
+  ["DRI", "Directly Responsible Individual — the single accountable owner for a project"],
+  ["Work unit", "One point of build load. Size maps to units: S=1, M=2, L=3, XL=4"],
 ];
-
-const TEMPLATE_JSON = `{
-  "id": "spt-01",
-  "code": "SPT-01",
-  "title": "Project title",
-  "workstream": "Support",
-  "stakeholder": "Primary stakeholder team (named lead)",
-  "revopsRole": "Business Systems",
-  "contractors": [{ "name": "Empty Cup Digital", "scope": "What they build" }],
-  "teams": ["Business Systems", "Marketing Services"],
-  "problem": "2-4 sentences. The pain, who feels it, and what it costs today.",
-  "solution": "2-4 sentences. The approach in plain language.",
-  "deliverables": [
-    { "text": "Concrete thing being built", "stretch": false },
-    { "text": "Nice-to-have if time allows", "stretch": true }
-  ],
-  "roles": [{ "who": "Team or person", "what": "Their responsibility" }],
-  "success": "Measurable outcome: baseline, target, timeframe, who measures it.",
-  "dependsOn": [{ "id": "sup-01", "note": "Why this is a prerequisite" }],
-  "openItems": ["Unresolved questions or risks"],
-  "dri": "Accountable owner (a person), or leave blank",
-  "targetWindow": "Q3 2026",
-  "impact": 3,
-  "effort": 3,
-  "size": "M",
-  "status": "Scoping"
-}`;
-
-const TARGETS = ["TBD", "Q3 2026", "Q4 2026", "Q1 2027", "Q2 2027", "H2 2026", "2027"];
 
 /* ---------- edit lock ---------- */
 const EDIT_PW = "12345678";
@@ -175,16 +148,12 @@ function resourceProjects(resource, projects) {
   });
 }
 function projectLoad(p) { return SIZE_POINTS[p.size] || SIZE_POINTS.M; }
-
-/* every leaf resource (member or sub-team), flattened with its group */
 function allResources() {
   const out = [];
   ORG.forEach((g) => {
     g.members.forEach((m) => {
       if (!m.sub) out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm, match: m.match });
-      (m.sub || []).forEach((s) =>
-        out.push({ group: g.name, label: s.name, parent: m.name, lead: s.lead, match: s.match })
-      );
+      (m.sub || []).forEach((s) => out.push({ group: g.name, label: s.name, parent: m.name, lead: s.lead, match: s.match }));
       if (m.sub && m.match) out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm, match: m.match });
     });
   });
@@ -212,7 +181,7 @@ function ScoreDots({ value, color }) {
 function SizeChip({ size, ws }) {
   const s = size || "M";
   return (
-    <span title={`${SIZE_LABEL[s]} build · ${SIZE_POINTS[s]} pts`} style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 6, background: (ws && ws.soft) || T.hairlineSoft, color: (ws && ws.color) || T.inkSoft, letterSpacing: "0.04em" }}>
+    <span title={`${SIZE_LABEL[s]} build · ${SIZE_POINTS[s]} work units`} style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 6, background: (ws && ws.soft) || T.hairlineSoft, color: (ws && ws.color) || T.inkSoft, letterSpacing: "0.04em" }}>
       {s}
     </span>
   );
@@ -268,7 +237,7 @@ export default function App() {
     try { await apiWrite("/api/projects", "PATCH", { id, ...patch }); }
     catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
   };
-  const addProject = async (proj) => { await apiWrite("/api/projects", "POST", proj); await refresh(); };
+  const addProject = async (proj) => { await apiWrite("/api/projects", "POST", proj); await refresh(); setSelectedId(proj.id); };
   const removeProject = async (id) => {
     if (!window.confirm("Remove this project from the portfolio?")) return;
     try { await apiWrite("/api/projects", "DELETE", { id }); setSelectedId(null); await refresh(); }
@@ -348,7 +317,7 @@ export default function App() {
           ) : view === "board" ? <Board projects={visible} onOpen={setSelectedId} />
             : view === "matrix" ? <Matrix projects={visible} onOpen={setSelectedId} />
               : view === "sequence" ? <Sequence projects={visible} byId={byId} onOpen={setSelectedId} />
-                : <Resourcing projects={projects} byId={byId} capacities={capacities} unlocked={unlocked} onSetCapacity={setCapacity} onOpen={setSelectedId} />}
+                : <Resourcing projects={projects} capacities={capacities} unlocked={unlocked} onSetCapacity={setCapacity} onOpen={setSelectedId} />}
       </main>
 
       {selected && <Detail p={selected} byId={byId} unlocked={unlocked} onClose={() => setSelectedId(null)} onUpdate={(patch) => updateProject(selected.id, patch)} onRemove={() => removeProject(selected.id)} onOpen={setSelectedId} />}
@@ -453,156 +422,171 @@ function Matrix({ projects, onOpen }) {
   );
 }
 
-/* ---------- SEQUENCE ---------- */
+/* ---------- SEQUENCE (dependency graph with arrows) ---------- */
 function Sequence({ projects, byId, onOpen }) {
   if (!projects.length) return <Empty />;
-  const level = (p, depth = 0) => {
+  const visibleIds = new Set(projects.map((p) => p.id));
+  const levelOf = (p, depth = 0) => {
     if (depth > 6) return 0;
-    const deps = (p.dependsOn || []).filter((d) => byId[d.id]);
+    const deps = (p.dependsOn || []).filter((d) => byId[d.id] && visibleIds.has(d.id));
     if (!deps.length) return 0;
-    return 1 + Math.max(...deps.map((d) => level(byId[d.id], depth + 1)));
+    return 1 + Math.max(...deps.map((d) => levelOf(byId[d.id], depth + 1)));
   };
-  const cols = [[], [], []];
-  projects.forEach((p) => cols[Math.min(level(p), 2)].push(p));
+  const cols = [];
+  projects.forEach((p) => { const lv = Math.min(levelOf(p), 2); (cols[lv] = cols[lv] || []).push(p); });
   const colTitles = ["Foundations", "Unlocked next", "Later"];
+
+  const NODE_W = 208, NODE_H = 60, V_GAP = 16, COL_GAP = 78, TOP = 44, LEFT = 6;
+  const colX = (lv) => LEFT + lv * (NODE_W + COL_GAP);
+  const pos = {};
+  cols.forEach((col, lv) => (col || []).forEach((p, i) => { pos[p.id] = { x: colX(lv), y: TOP + i * (NODE_H + V_GAP) }; }));
+  const usedCols = cols.filter(Boolean).length;
+  const maxRows = Math.max(1, ...cols.filter(Boolean).map((c) => c.length));
+  const width = colX(usedCols - 1) + NODE_W + LEFT;
+  const height = TOP + maxRows * (NODE_H + V_GAP) + 8;
+
+  const edges = [];
+  projects.forEach((p) => (p.dependsOn || []).forEach((d) => { if (pos[d.id] && pos[p.id]) edges.push([d.id, p.id]); }));
+
+  const trunc = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+
   return (
     <div>
-      <h2 style={{ ...h2Style, marginBottom: 10 }}>Sequencing by dependency</h2>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
-        {cols.map((col, i) =>
-          col.length === 0 && i === 2 ? null : (
-            <div key={i} style={{ background: T.paper, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 14 }}>
-              <div style={{ marginBottom: 12 }}>
-                <Eyebrow>{`PHASE ${i + 1}`}</Eyebrow>
-                <div style={{ fontFamily: T.display, fontWeight: 700, fontSize: 15, marginTop: 2 }}>{colTitles[i]}</div>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {col.map((p) => {
-                  const ws = WS[p.workstream] || WS.Other;
-                  const needs = (p.dependsOn || []).filter((d) => byId[d.id]).map((d) => byId[d.id].code);
-                  return (
-                    <button key={p.id} onClick={() => onOpen(p.id)} style={{ textAlign: "left", background: T.surface, border: `1px solid ${T.hairline}`, borderLeft: `3px solid ${ws.color}`, borderRadius: 10, padding: "12px 14px", fontFamily: T.body }}>
-                      <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}><Eyebrow color={ws.color}>{p.code}</Eyebrow><span style={{ fontWeight: 600, fontSize: 13.5, color: T.ink }}>{p.title}</span></div>
-                      {needs.length > 0 && <div style={{ marginTop: 6, fontSize: 11.5, color: T.inkSoft }}>Needs {needs.join(", ")}</div>}
-                    </button>
-                  );
-                })}
-                {col.length === 0 && <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>Nothing here yet.</p>}
-              </div>
-            </div>
-          )
-        )}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+        <h2 style={h2Style}>Sequencing by dependency</h2>
+        <span style={{ fontSize: 12, color: T.inkSoft }}>Arrows point from a prerequisite to what it unlocks.</span>
+      </div>
+      <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12, overflowX: "auto" }}>
+        <svg viewBox={`0 0 ${Math.max(width, 320)} ${height}`} style={{ width: "100%", minWidth: Math.min(width, 900), display: "block" }} role="img" aria-label="Dependency sequence">
+          <defs>
+            <marker id="seqArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#A33D3D" />
+            </marker>
+          </defs>
+          {cols.map((col, lv) => col && col.length ? (
+            <text key={lv} x={colX(lv)} y={22} fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.inkSoft} letterSpacing="0.06em">{colTitles[lv].toUpperCase()}</text>
+          ) : null)}
+          {edges.map(([from, to], i) => {
+            const a = pos[from], b = pos[to];
+            const sx = a.x + NODE_W, sy = a.y + NODE_H / 2;
+            const ex = b.x, ey = b.y + NODE_H / 2;
+            const mx = (sx + ex) / 2;
+            return <path key={i} d={`M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex - 2} ${ey}`} fill="none" stroke="#A33D3D" strokeWidth="1.6" opacity="0.7" markerEnd="url(#seqArrow)" />;
+          })}
+          {projects.map((p) => {
+            const ws = WS[p.workstream] || WS.Other;
+            const { x: nx, y: ny } = pos[p.id];
+            return (
+              <g key={p.id} onClick={() => onOpen(p.id)} style={{ cursor: "pointer" }}>
+                <rect x={nx} y={ny} width={NODE_W} height={NODE_H} rx={10} fill={T.surface} stroke={T.hairline} />
+                <rect x={nx} y={ny} width={4} height={NODE_H} rx={2} fill={ws.color} />
+                <text x={nx + 16} y={ny + 23} fontSize="10.5" fontFamily={T.mono} fontWeight="600" fill={ws.color} letterSpacing="0.06em">{p.code} · {p.size || "M"}</text>
+                <text x={nx + 16} y={ny + 41} fontSize="12.5" fontFamily={T.body} fontWeight="600" fill={T.ink}>{trunc(p.title, 24)}</text>
+              </g>
+            );
+          })}
+        </svg>
       </div>
     </div>
   );
 }
 
-/* ---------- RESOURCING ---------- */
+/* ---------- RESOURCING (allocation chart) ---------- */
 function Resourcing({ projects, capacities, unlocked, onSetCapacity, onOpen }) {
-  const resources = useMemo(() => allResources(), []);
-  const enriched = resources.map((r) => {
+  const enriched = allResources().map((r) => {
     const ps = resourceProjects(r, projects);
-    const load = ps.reduce((s, p) => s + projectLoad(p), 0);
-    return { ...r, projects: ps, load };
+    return { ...r, projects: ps, units: ps.reduce((s, p) => s + projectLoad(p), 0) };
   });
-
-  // group → { staffed: [...], bench: [labels] }
-  const groups = ORG.map((g) => {
-    const inGroup = enriched.filter((r) => r.group === g.name);
-    const staffed = inGroup.filter((r) => r.projects.length > 0).sort((a, b) => b.load - a.load);
-    const benchSet = [];
-    g.members.forEach((m) => {
-      const leaves = m.sub ? m.sub.map((s) => s.name) : [m.name];
-      leaves.forEach((lbl) => { if (!staffed.find((r) => r.label === lbl)) benchSet.push(lbl); });
-    });
-    return { name: g.name, staffed, bench: Array.from(new Set(benchSet)) };
-  });
-  const active = groups.filter((g) => g.staffed.length > 0);
-  const idle = groups.filter((g) => g.staffed.length === 0);
+  const byGroup = {};
+  enriched.forEach((r) => { if (r.projects.length) (byGroup[r.group] = byGroup[r.group] || []).push(r); });
+  const activeGroups = ORG.map((g) => g.name).filter((g) => byGroup[g]);
+  const idleGroups = ORG.map((g) => g.name).filter((g) => !byGroup[g]);
+  const involved = (r, p) => r.projects.some((x) => x.id === p.id);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h2 style={{ ...h2Style, marginBottom: 2 }}>Resourcing & capacity</h2>
-          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>Committed build load per team, sized S–XL. Bars past capacity are over-committed.{unlocked ? " Capacities are editable." : ""}</p>
+          <h2 style={{ ...h2Style, marginBottom: 2 }}>Resourcing & allocation</h2>
+          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>Teams × projects. Each cell is the project's work units; the total is allocated load.{unlocked ? " Capacity is editable." : ""}</p>
         </div>
-        <div style={{ display: "flex", gap: 12, fontSize: 11.5, color: T.inkSoft, fontFamily: T.mono }}>
-          {SIZES.map((s) => <span key={s}>{s}={SIZE_POINTS[s]}</span>)}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.mono, fontSize: 11.5, color: T.inkSoft }}>
+          <span style={{ letterSpacing: "0.06em" }}>WORK UNITS</span>
+          {SIZES.map((s) => <span key={s} style={{ padding: "2px 7px", borderRadius: 6, background: T.hairlineSoft, color: T.ink, fontWeight: 700 }}>{s} = {SIZE_POINTS[s]}</span>)}
         </div>
       </div>
 
-      {active.map((g) => (
-        <div key={g.name} style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: "16px 18px" }}>
-          <div style={{ fontFamily: T.display, fontWeight: 700, fontSize: 15, marginBottom: 12 }}>{g.name}</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {g.staffed.map((r) => (
-              <CapacityRow key={r.label} r={r} cap={capacities[r.label] ?? DEFAULT_CAP} unlocked={unlocked} onSetCapacity={onSetCapacity} onOpen={onOpen} />
+      <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760, fontFamily: T.body }}>
+          <thead>
+            <tr>
+              <th style={{ ...thStyle, textAlign: "left", minWidth: 210, position: "sticky", left: 0, background: T.paper, zIndex: 1 }}>Team / resource</th>
+              {projects.map((p) => {
+                const ws = WS[p.workstream] || WS.Other;
+                return (
+                  <th key={p.id} style={{ ...thStyle }}>
+                    <button onClick={() => onOpen(p.id)} title={p.title} style={{ background: "none", border: "none", color: ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em" }}>{p.code}</button>
+                  </th>
+                );
+              })}
+              <th style={{ ...thStyle, borderLeft: `1px solid ${T.hairline}` }}>Allocated</th>
+              <th style={thStyle}>Capacity</th>
+            </tr>
+          </thead>
+          <tbody>
+            {activeGroups.map((g) => (
+              <ResourceGroup key={g} group={g} rows={byGroup[g]} projects={projects} capacities={capacities} unlocked={unlocked} onSetCapacity={onSetCapacity} involved={involved} />
             ))}
-          </div>
-          {g.bench.length > 0 && (
-            <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${T.hairlineSoft}`, fontSize: 12, color: T.inkSoft }}>
-              <span style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", marginRight: 8 }}>AVAILABLE</span>
-              {g.bench.join(" · ")}
-            </div>
-          )}
-        </div>
-      ))}
+          </tbody>
+        </table>
+      </div>
 
-      {idle.length > 0 && (
-        <div style={{ background: T.paper, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: "14px 18px" }}>
+      {idleGroups.length > 0 && (
+        <div style={{ background: T.paper, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: "12px 16px" }}>
           <span style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: T.inkSoft, marginRight: 8 }}>NOT YET STAFFED</span>
-          <span style={{ fontSize: 12.5, color: T.inkSoft }}>
-            {idle.map((g) => g.name).join(" · ")}
-          </span>
+          <span style={{ fontSize: 12.5, color: T.inkSoft }}>{idleGroups.join(" · ")}</span>
         </div>
       )}
     </div>
   );
 }
 
-function CapacityRow({ r, cap, unlocked, onSetCapacity, onOpen }) {
-  const over = r.load > cap;
-  const pct = Math.min(100, (r.load / Math.max(cap, 1)) * 100);
-  const barColor = over ? "#C0463E" : r.load >= cap ? "#C2750F" : "#0E8A74";
+function ResourceGroup({ group, rows, projects, capacities, unlocked, onSetCapacity, involved }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 200px) 1fr", gap: 16, alignItems: "center" }}>
-      <div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Avatar name={r.lead || r.label} color={T.ink} />
-          <div>
-            <div style={{ fontSize: 13.5, fontWeight: 600, color: T.ink }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</div>
-            {r.lead && <div style={{ fontSize: 11.5, color: T.inkSoft }}>{r.lead}{r.pm ? ` · PM ${r.pm}` : ""}</div>}
-          </div>
-        </div>
-      </div>
-      <div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-          <div style={{ flex: 1, height: 10, background: T.hairlineSoft, borderRadius: 999, overflow: "hidden" }}>
-            <div style={{ width: `${pct}%`, height: "100%", background: barColor, borderRadius: 999, transition: "width .2s" }} />
-          </div>
-          <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 600, color: over ? "#C0463E" : T.inkSoft, whiteSpace: "nowrap" }}>
-            {r.load}/
-            {unlocked ? (
-              <input type="number" min="1" value={cap} onChange={(e) => onSetCapacity(r.label, Math.max(1, Number(e.target.value) || 1))}
-                style={{ width: 38, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "1px 4px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface }} />
-            ) : cap}
-            {over && " ⚠"}
-          </span>
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {r.projects.map((p) => {
-            const ws = WS[p.workstream] || WS.Other;
-            return (
-              <button key={p.id} onClick={() => onOpen(p.id)} title={`${p.title} · ${SIZE_LABEL[p.size || "M"]}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: ws.soft, color: ws.color, border: "none", borderRadius: 999, padding: "3px 10px", fontFamily: T.body, fontSize: 11.5, fontWeight: 500 }}>
-                <span style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</span>
-                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, opacity: 0.8 }}>{p.size || "M"}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
+    <>
+      <tr>
+        <td colSpan={projects.length + 3} style={{ padding: "10px 14px 4px", background: T.paper, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{group}</td>
+      </tr>
+      {rows.map((r) => {
+        const cap = capacities[r.label] ?? DEFAULT_CAP;
+        const over = r.units > cap;
+        return (
+          <tr key={r.label} style={{ borderTop: `1px solid ${T.hairlineSoft}` }}>
+            <td style={{ padding: "9px 14px", fontSize: 13, position: "sticky", left: 0, background: T.surface }}>
+              <span style={{ fontWeight: 600 }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</span>
+              {r.lead && <span style={{ marginLeft: 8, fontSize: 11, color: T.inkSoft }}>{r.lead}</span>}
+            </td>
+            {projects.map((p) => {
+              const ws = WS[p.workstream] || WS.Other;
+              const on = involved(r, p);
+              return (
+                <td key={p.id} style={{ textAlign: "center", padding: "9px 6px" }}>
+                  {on ? <span title={`${p.code} · ${SIZE_LABEL[p.size || "M"]} · ${projectLoad(p)} units`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, background: ws.soft, color: ws.color, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 }}>{projectLoad(p)}</span> : null}
+                </td>
+              );
+            })}
+            <td style={{ textAlign: "center", fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: over ? "#C0463E" : T.ink, borderLeft: `1px solid ${T.hairline}` }}>
+              {r.units}{over && " ⚠"}
+            </td>
+            <td style={{ textAlign: "center" }}>
+              {unlocked
+                ? <input type="number" min="1" value={cap} onChange={(e) => onSetCapacity(r.label, Math.max(1, Number(e.target.value) || 1))} style={{ width: 46, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "2px 4px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} />
+                : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}
+            </td>
+          </tr>
+        );
+      })}
+    </>
   );
 }
 
@@ -610,42 +594,51 @@ function CapacityRow({ r, cap, unlocked, onSetCapacity, onOpen }) {
 function Detail({ p, byId, unlocked, onClose, onUpdate, onRemove, onOpen }) {
   const ws = WS[p.workstream] || WS.Other;
   const deps = p.dependsOn || [];
+  const contractors = p.contractors || [];
   const committed = (p.deliverables || []).filter((d) => !d.stretch);
   const stretch = (p.deliverables || []).filter((d) => d.stretch);
-  const contractors = p.contractors || [];
-  // de-dup: contractors live in their own rail card, so drop them from "Who does what"
-  const contractorNames = contractors.map((c) => (c.name || "").toLowerCase());
-  const roles = (p.roles || []).filter((r) => {
-    const w = (r.who || "").toLowerCase();
-    if (w.includes("contractor")) return false;
-    return !contractorNames.some((n) => n && w.includes(n));
-  });
 
+  // de-dup (locked view): drop roles that are an actual contractor by name
+  const contractorNames = contractors.map((c) => (c.name || "").toLowerCase().trim());
+  const roleHidden = (who) => {
+    const w = (who || "").toLowerCase().trim();
+    if (!contractors.length) return false;
+    if (w === "contractor" || w === "contractors") return true;
+    return contractorNames.some((n) => n && (w === n || w.startsWith(n)));
+  };
+  const rolesView = (p.roles || []).filter((r) => !roleHidden(r.who));
+  const depOptions = Object.values(byId).filter((x) => x.id !== p.id);
+
+  const targetOpts = Array.from(new Set([p.targetWindow || "TBD", ...TARGETS]));
   const targetCtl = unlocked
-    ? <MiniSelect value={p.targetWindow || "TBD"} options={TARGETS} onChange={(v) => onUpdate({ targetWindow: v })} />
+    ? <MiniSelect value={p.targetWindow || "TBD"} options={targetOpts} onChange={(v) => onUpdate({ targetWindow: v })} />
     : <span style={{ fontSize: 13, fontWeight: 600 }}>{p.targetWindow || "TBD"}</span>;
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
       <div className="proj-drawer" onClick={(e) => e.stopPropagation()} style={{ height: "100%", background: T.bg, overflowY: "auto", boxShadow: "-12px 0 40px rgba(28,37,33,.18)", fontFamily: T.body }}>
-        {/* header band — full width, sticky */}
+        {/* header band */}
         <div style={{ padding: "22px 26px 18px", background: T.surface, borderBottom: `1px solid ${T.hairline}`, position: "sticky", top: 0, zIndex: 2 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-            <div>
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}><Eyebrow color={ws.color}>{p.code}</Eyebrow><Chip bg={ws.soft} fg={ws.color}>{p.workstream}</Chip></div>
-              <h2 style={{ fontFamily: T.display, fontWeight: 800, fontSize: 24, margin: "8px 0 0", letterSpacing: "-0.02em", lineHeight: 1.1 }}>{p.title}</h2>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <Eyebrow color={ws.color}>{p.code}</Eyebrow>
+                {unlocked
+                  ? <MiniSelect value={p.workstream} options={WORKSTREAMS} onChange={(v) => onUpdate({ workstream: v })} />
+                  : <Chip bg={ws.soft} fg={ws.color}>{p.workstream}</Chip>}
+              </div>
+              {unlocked
+                ? <div style={{ marginTop: 8 }}><TextEdit value={p.title} placeholder="Project title" big onCommit={(v) => onUpdate({ title: v })} /></div>
+                : <h2 style={{ fontFamily: T.display, fontWeight: 800, fontSize: 24, margin: "8px 0 0", letterSpacing: "-0.02em", lineHeight: 1.1 }}>{p.title}</h2>}
               {(unlocked || p.dri) && (
-                <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 7 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8 }}>
                   <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft }}>DRI</span>
-                  {unlocked
-                    ? <TextEdit value={p.dri} placeholder="Add accountable owner" onCommit={(v) => onUpdate({ dri: v })} />
-                    : <span style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{p.dri}</span>}
+                  {unlocked ? <TextEdit value={p.dri} placeholder="Accountable owner" onCommit={(v) => onUpdate({ dri: v })} /> : <span style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{p.dri}</span>}
                 </div>
               )}
             </div>
             <button onClick={onClose} aria-label="Close" style={{ background: "none", border: `1px solid ${T.hairline}`, borderRadius: 8, width: 32, height: 32, fontSize: 16, color: T.inkSoft, flexShrink: 0 }}>✕</button>
           </div>
-          {/* stats strip */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 0, marginTop: 16, border: `1px solid ${T.hairline}`, borderRadius: 10, overflow: "hidden" }}>
             <Stat label="Status">{unlocked ? <MiniSelect value={p.status} options={STATUSES} onChange={(v) => onUpdate({ status: v })} /> : <Chip bg={statusBg(p.status)} fg={statusFg(p.status)}>{p.status}</Chip>}</Stat>
             <Stat label="Impact">{unlocked ? <MiniSelect value={p.impact} options={[1, 2, 3, 4, 5]} onChange={(v) => onUpdate({ impact: Number(v) })} /> : <ScoreDots value={p.impact} color={ws.color} />}</Stat>
@@ -653,106 +646,117 @@ function Detail({ p, byId, unlocked, onClose, onUpdate, onRemove, onOpen }) {
             <Stat label="Size">{unlocked ? <MiniSelect value={p.size || "M"} options={SIZES} onChange={(v) => onUpdate({ size: v })} /> : <SizeChip size={p.size} ws={ws} />}</Stat>
             <Stat label="Target" className="proj-wide-only">{targetCtl}</Stat>
           </div>
-          {/* target as a caption on narrow screens (no 5th cell) */}
           <div className="proj-narrow-only" style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8 }}>
             <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft }}>TARGET</span>{targetCtl}
           </div>
         </div>
 
-        {/* body: 60/40 main+rail at >=1080px, single stacked column below */}
         <div className="proj-grid" style={{ padding: "20px 26px 6px" }}>
-          {/* MAIN reading column */}
+          {/* MAIN */}
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-            <AccentCard accent="#C0463E" icon="!" title="The problem">{p.problem}</AccentCard>
-            <AccentCard accent={ws.color} icon="→" title="The solution">{p.solution}</AccentCard>
+            <AccentCard accent="#C0463E" icon="!" title="The problem">
+              {unlocked ? <AreaEdit value={p.problem} onCommit={(v) => onUpdate({ problem: v })} /> : <p style={cardText}>{p.problem}</p>}
+            </AccentCard>
+            <AccentCard accent={ws.color} icon="→" title="The solution">
+              {unlocked ? <AreaEdit value={p.solution} onCommit={(v) => onUpdate({ solution: v })} /> : <p style={cardText}>{p.solution}</p>}
+            </AccentCard>
 
-            <Panel title={`What's being built · ${committed.length}`}>
-              <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
-                {committed.map((d, i) => (
-                  <li key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, lineHeight: 1.5 }}>
-                    <span style={{ color: ws.color, fontWeight: 700, marginTop: 1 }}>✓</span><span>{d.text}</span>
-                  </li>
-                ))}
-              </ul>
-              {stretch.length > 0 && (
-                <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px dashed ${T.hairline}` }}>
-                  <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: "#9A6A12", marginBottom: 8 }}>STRETCH — IF TIME ALLOWS</div>
-                  <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
-                    {stretch.map((d, i) => (
-                      <li key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, lineHeight: 1.5, color: T.inkSoft }}>
-                        <span style={{ color: "#C9A24B", marginTop: 1 }}>○</span><span>{d.text}</span>
-                      </li>
+            <Panel title={`What's being built${committed.length ? ` · ${committed.length}` : ""}`}>
+              {unlocked ? <DeliverableEditor items={p.deliverables || []} accent={ws.color} onCommit={(v) => onUpdate({ deliverables: v })} /> : (
+                <>
+                  <ul style={listReset}>
+                    {committed.map((d, i) => (
+                      <li key={i} style={liRow}><span style={{ color: ws.color, fontWeight: 700, marginTop: 1 }}>✓</span><span>{d.text}</span></li>
                     ))}
                   </ul>
-                </div>
+                  {stretch.length > 0 && (
+                    <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px dashed ${T.hairline}` }}>
+                      <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: "#9A6A12", marginBottom: 8 }}>STRETCH — IF TIME ALLOWS</div>
+                      <ul style={listReset}>
+                        {stretch.map((d, i) => <li key={i} style={{ ...liRow, color: T.inkSoft }}><span style={{ color: "#C9A24B", marginTop: 1 }}>○</span><span>{d.text}</span></li>)}
+                      </ul>
+                    </div>
+                  )}
+                </>
               )}
             </Panel>
 
             <div style={{ background: "#EDF6F0", border: "1px solid #C9E4D6", borderRadius: 12, padding: "14px 16px" }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 14 }}>🎯</span><SectionTitle>Definition of success</SectionTitle>
-                {p.baselineTBD && <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", padding: "2px 7px", borderRadius: 999, background: "#FBEAEA", color: "#A33D3D" }}>BASELINE TBD</span>}
-              </div>
-              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.ink }}>{p.success}</p>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}><span style={{ fontSize: 14 }}>🎯</span><SectionTitle>Definition of success</SectionTitle></div>
+              {unlocked ? <AreaEdit value={p.success} onCommit={(v) => onUpdate({ success: v })} /> : <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.ink }}>{p.success}</p>}
             </div>
           </div>
 
-          {/* METADATA RAIL */}
+          {/* RAIL */}
           <aside style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-            {contractors.length > 0 && (
+            {(contractors.length > 0 || unlocked) && (
               <Panel title="Resourcing">
-                <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                  {contractors.map((c, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                      <span style={{ fontSize: 13, fontWeight: 600 }} title={c.scope}>{c.name}</span>
-                      <StatusTag status={c.status} />
-                    </div>
-                  ))}
-                </div>
-              </Panel>
-            )}
-
-            <Panel title="Who does what">
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {roles.map((r, i) => (
-                  <div key={i} style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 13 }}>
-                    <Avatar name={r.who} color={ws.color} />
-                    <div><span style={{ fontWeight: 600 }}>{r.who}</span><div style={{ color: T.inkSoft, lineHeight: 1.45, marginTop: 1 }}>{r.what}</div></div>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-
-            {deps.length > 0 && (
-              <Panel title="Depends on">
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {deps.map((d, i) => {
-                    const dep = byId[d.id];
-                    return (
-                      <div key={i} style={{ fontSize: 13, lineHeight: 1.5, display: "flex", gap: 8, alignItems: "baseline" }}>
-                        <span style={{ color: "#A33D3D", fontWeight: 700 }}>↳</span>
-                        <span>
-                          {dep ? <button onClick={() => onOpen(dep.id)} style={{ background: "none", border: "none", fontWeight: 600, color: T.ink, fontSize: 13, textDecoration: "underline", padding: 0, fontFamily: T.body }}>{dep.code} — {dep.title}</button> : <span style={{ fontWeight: 600 }}>Outside this portfolio</span>}
-                          {d.note && <span style={{ color: T.inkSoft }}> — {d.note}</span>}
-                        </span>
+                {unlocked ? <ContractorEditor items={contractors} onCommit={(v) => onUpdate({ contractors: v })} /> : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {contractors.map((c, i) => (
+                      <div key={i}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                          <span style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</span><StatusTag status={c.status} />
+                        </div>
+                        {c.scope && <div style={{ fontSize: 12, color: T.inkSoft, marginTop: 2 }}>{c.scope}</div>}
                       </div>
-                    );
-                  })}
-                </div>
+                    ))}
+                  </div>
+                )}
               </Panel>
             )}
 
-            {(p.openItems || []).length > 0 && (
+            {(rolesView.length > 0 || unlocked) && (
+              <Panel title="Who does what">
+                {unlocked ? <RoleEditor items={p.roles || []} accent={ws.color} onCommit={(v) => onUpdate({ roles: v })} /> : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {rolesView.map((r, i) => (
+                      <div key={i} style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 13 }}>
+                        <Avatar name={r.who} color={ws.color} />
+                        <div><span style={{ fontWeight: 600 }}>{r.who}</span><div style={{ color: T.inkSoft, lineHeight: 1.45, marginTop: 1 }}>{r.what}</div></div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Panel>
+            )}
+
+            {(deps.length > 0 || unlocked) && (
+              <Panel title="Depends on">
+                {unlocked ? <DependsEditor items={deps} options={depOptions} onCommit={(v) => onUpdate({ dependsOn: v })} /> : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {deps.map((d, i) => {
+                      const dep = byId[d.id];
+                      return (
+                        <div key={i} style={{ fontSize: 13, lineHeight: 1.5, display: "flex", gap: 8, alignItems: "baseline" }}>
+                          <span style={{ color: "#A33D3D", fontWeight: 700 }}>↳</span>
+                          <span>
+                            {dep ? <button onClick={() => onOpen(dep.id)} style={linkBtn}>{dep.code} — {dep.title}</button> : <span style={{ fontWeight: 600 }}>Outside this portfolio</span>}
+                            {d.note && <span style={{ color: T.inkSoft }}> — {d.note}</span>}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </Panel>
+            )}
+
+            {((p.openItems || []).length > 0 || unlocked) && (
               <div style={{ background: "#FFF8EC", border: "1px solid #EFDFBC", borderRadius: 12, padding: "12px 16px" }}>
                 <SectionTitle>Risks & assumptions</SectionTitle>
-                <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: "#6E5612" }}>{p.openItems.map((o, i) => <li key={i}>{o}</li>)}</ul>
+                {unlocked ? <div style={{ marginTop: 8 }}><StringListEditor items={p.openItems || []} placeholder="Add a risk or assumption" onCommit={(v) => onUpdate({ openItems: v })} /></div>
+                  : <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: "#6E5612" }}>{p.openItems.map((o, i) => <li key={i}>{o}</li>)}</ul>}
               </div>
             )}
 
             <Panel title="Ownership">
-              <div style={{ fontSize: 13, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 13, lineHeight: 1.6 }}>
                 {p.dri && <div style={{ marginBottom: 4 }}><span style={{ color: T.inkSoft }}>DRI · </span><span style={{ fontWeight: 600 }}>{p.dri}</span></div>}
-                <div><span style={{ color: T.inkSoft }}>Stakeholder · </span><span style={{ fontWeight: 600 }}>{p.stakeholder}</span></div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ color: T.inkSoft }}>Stakeholder · </span>
+                  {unlocked ? <TextEdit value={p.stakeholder} placeholder="Stakeholder team" onCommit={(v) => onUpdate({ stakeholder: v })} /> : <span style={{ fontWeight: 600 }}>{p.stakeholder}</span>}
+                </div>
               </div>
             </Panel>
           </aside>
@@ -768,6 +772,126 @@ function Detail({ p, byId, unlocked, onClose, onUpdate, onRemove, onOpen }) {
   );
 }
 
+/* ---------- inline editors ---------- */
+function TextEdit({ value, placeholder, onCommit, big }) {
+  const [v, setV] = useState(value || "");
+  useEffect(() => { setV(value || ""); }, [value]);
+  return (
+    <input value={v} placeholder={placeholder} onChange={(e) => setV(e.target.value)} onBlur={() => { if (v !== (value || "")) onCommit(v); }}
+      style={{ fontFamily: big ? T.display : T.body, fontSize: big ? 20 : 12.5, fontWeight: big ? 800 : 600, letterSpacing: big ? "-0.01em" : 0, padding: big ? "4px 8px" : "3px 7px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, minWidth: big ? "100%" : 150, width: big ? "100%" : undefined }} />
+  );
+}
+function AreaEdit({ value, onCommit, rows = 3 }) {
+  const [v, setV] = useState(value || "");
+  useEffect(() => { setV(value || ""); }, [value]);
+  return (
+    <textarea value={v} rows={rows} onChange={(e) => setV(e.target.value)} onBlur={() => { if (v !== (value || "")) onCommit(v); }}
+      style={{ width: "100%", fontFamily: T.body, fontSize: 13, lineHeight: 1.5, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, resize: "vertical" }} />
+  );
+}
+function DeliverableEditor({ items, accent, onCommit }) {
+  const [list, setList] = useState(items);
+  useEffect(() => { setList(items); }, [items]);
+  const push = (next) => { setList(next); onCommit(next); };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+      {list.map((d, i) => (
+        <div key={i} style={{ display: "flex", gap: 7, alignItems: "center" }}>
+          <button title={d.stretch ? "Stretch — click to commit" : "Committed — click to mark stretch"} onClick={() => push(list.map((x, j) => j === i ? { ...x, stretch: !x.stretch } : x))} style={{ background: "none", border: "none", fontSize: 14, color: d.stretch ? "#C9A24B" : accent, width: 18 }}>{d.stretch ? "○" : "✓"}</button>
+          <input value={d.text} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, text: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="Deliverable"
+            style={{ flex: 1, fontFamily: T.body, fontSize: 13, padding: "5px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink }} />
+          <button onClick={() => push(list.filter((_, j) => j !== i))} style={xBtn} aria-label="Remove">✕</button>
+        </div>
+      ))}
+      <button onClick={() => push([...list, { text: "", stretch: false }])} style={addBtn}>+ Add deliverable</button>
+    </div>
+  );
+}
+function RoleEditor({ items, accent, onCommit }) {
+  const [list, setList] = useState(items);
+  useEffect(() => { setList(items); }, [items]);
+  const push = (next) => { setList(next); onCommit(next); };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+      {list.map((r, i) => (
+        <div key={i} style={{ display: "flex", gap: 7, alignItems: "flex-start" }}>
+          <Avatar name={r.who || "?"} color={accent} />
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 5 }}>
+            <input value={r.who} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, who: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="Who"
+              style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink }} />
+            <input value={r.what} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, what: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="Responsibility"
+              style={{ fontFamily: T.body, fontSize: 12.5, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.inkSoft }} />
+          </div>
+          <button onClick={() => push(list.filter((_, j) => j !== i))} style={xBtn} aria-label="Remove">✕</button>
+        </div>
+      ))}
+      <button onClick={() => push([...list, { who: "", what: "" }])} style={addBtn}>+ Add role</button>
+    </div>
+  );
+}
+function ContractorEditor({ items, onCommit }) {
+  const [list, setList] = useState(items);
+  useEffect(() => { setList(items); }, [items]);
+  const push = (next) => { setList(next); onCommit(next); };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+      {list.map((c, i) => (
+        <div key={i} style={{ display: "flex", flexDirection: "column", gap: 5, borderBottom: i < list.length - 1 ? `1px solid ${T.hairlineSoft}` : "none", paddingBottom: 7 }}>
+          <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
+            <input value={c.name} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="Contractor"
+              style={{ flex: 1, fontFamily: T.body, fontSize: 13, fontWeight: 600, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink }} />
+            <select value={c.status === "Engaged" ? "Engaged" : "TBD"} onChange={(e) => push(list.map((x, j) => j === i ? { ...x, status: e.target.value } : x))} style={{ fontFamily: T.body, fontSize: 12, padding: "4px 6px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink }}>
+              <option value="Engaged">Engaged</option><option value="TBD">TBD</option>
+            </select>
+            <button onClick={() => push(list.filter((_, j) => j !== i))} style={xBtn} aria-label="Remove">✕</button>
+          </div>
+          <input value={c.scope} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, scope: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="Scope"
+            style={{ fontFamily: T.body, fontSize: 12.5, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.inkSoft }} />
+        </div>
+      ))}
+      <button onClick={() => push([...list, { name: "", scope: "", status: "TBD" }])} style={addBtn}>+ Add contractor</button>
+    </div>
+  );
+}
+function StringListEditor({ items, placeholder, onCommit }) {
+  const [list, setList] = useState(items);
+  useEffect(() => { setList(items); }, [items]);
+  const push = (next) => { setList(next); onCommit(next); };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {list.map((s, i) => (
+        <div key={i} style={{ display: "flex", gap: 7, alignItems: "center" }}>
+          <input value={s} onChange={(e) => setList(list.map((x, j) => j === i ? e.target.value : x))} onBlur={() => onCommit(list)} placeholder={placeholder}
+            style={{ flex: 1, fontFamily: T.body, fontSize: 13, padding: "5px 8px", borderRadius: 6, border: `1px solid #E2CF9E`, background: "#FFFDF7", color: "#6E5612" }} />
+          <button onClick={() => push(list.filter((_, j) => j !== i))} style={xBtn} aria-label="Remove">✕</button>
+        </div>
+      ))}
+      <button onClick={() => push([...list, ""])} style={addBtn}>+ Add item</button>
+    </div>
+  );
+}
+function DependsEditor({ items, options, onCommit }) {
+  const [list, setList] = useState(items);
+  useEffect(() => { setList(items); }, [items]);
+  const push = (next) => { setList(next); onCommit(next); };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {list.map((d, i) => (
+        <div key={i} style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
+          <select value={d.id || ""} onChange={(e) => push(list.map((x, j) => j === i ? { ...x, id: e.target.value } : x))} style={{ fontFamily: T.body, fontSize: 12.5, padding: "4px 6px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink }}>
+            <option value="">Outside portfolio</option>
+            {options.map((o) => <option key={o.id} value={o.id}>{o.code}</option>)}
+          </select>
+          <input value={d.note || ""} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, note: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="Why it's a prerequisite"
+            style={{ flex: 1, minWidth: 120, fontFamily: T.body, fontSize: 12.5, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.inkSoft }} />
+          <button onClick={() => push(list.filter((_, j) => j !== i))} style={xBtn} aria-label="Remove">✕</button>
+        </div>
+      ))}
+      <button onClick={() => push([...list, { id: "", note: "" }])} style={addBtn}>+ Add dependency</button>
+    </div>
+  );
+}
+
 function Stat({ label, children, className }) {
   return (
     <div className={className} style={{ flex: "1 1 0", minWidth: 88, padding: "9px 12px", background: T.surface, borderRight: `1px solid ${T.hairlineSoft}` }}>
@@ -778,19 +902,7 @@ function Stat({ label, children, className }) {
 }
 function StatusTag({ status }) {
   const engaged = (status || "").toLowerCase() === "engaged";
-  return (
-    <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", padding: "2px 8px", borderRadius: 999, background: engaged ? "#E4F3EF" : "#FBEAEA", color: engaged ? "#0E8A74" : "#A33D3D", whiteSpace: "nowrap" }}>
-      {(status || "TBD").toUpperCase()}
-    </span>
-  );
-}
-function TextEdit({ value, placeholder, onCommit }) {
-  const [v, setV] = useState(value || "");
-  useEffect(() => { setV(value || ""); }, [value]);
-  return (
-    <input value={v} placeholder={placeholder} onChange={(e) => setV(e.target.value)} onBlur={() => { if (v !== (value || "")) onCommit(v); }}
-      style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, padding: "3px 7px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, minWidth: 150 }} />
-  );
+  return <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", padding: "2px 8px", borderRadius: 999, background: engaged ? "#E4F3EF" : "#FBEAEA", color: engaged ? "#0E8A74" : "#A33D3D", whiteSpace: "nowrap" }}>{(status || "TBD").toUpperCase()}</span>;
 }
 function AccentCard({ accent, icon, title, children }) {
   return (
@@ -799,7 +911,7 @@ function AccentCard({ accent, icon, title, children }) {
         <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, borderRadius: 4, background: accent, color: "#fff", fontSize: 11, fontWeight: 700 }}>{icon}</span>
         <SectionTitle>{title}</SectionTitle>
       </div>
-      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: T.ink }}>{children}</p>
+      {children}
     </div>
   );
 }
@@ -819,31 +931,55 @@ function MiniSelect({ value, options, onChange }) {
   );
 }
 
-/* ---------- ADD MODAL ---------- */
+/* ---------- ADD MODAL (structured) ---------- */
 function AddModal({ onClose, onAdd, existing }) {
-  const [text, setText] = useState("");
+  const [f, setF] = useState({ title: "", workstream: "Marketing Services", size: "M", impact: 3, effort: 3, targetWindow: "Q3 2026", dri: "", problem: "", solution: "" });
   const [err, setErr] = useState("");
+  const set = (k, v) => setF((prev) => ({ ...prev, [k]: v }));
+
   const submit = () => {
-    try {
-      const obj = JSON.parse(text);
-      if (!obj.id || !obj.title || !obj.workstream) { setErr("Needs at least id, title, and workstream."); return; }
-      if (existing.some((p) => p.id === obj.id)) { setErr(`A project with id "${obj.id}" already exists — pick a new code.`); return; }
-      obj.code = obj.code || obj.id.toUpperCase();
-      obj.impact = obj.impact || 3; obj.effort = obj.effort || 3; obj.size = obj.size || "M"; obj.status = obj.status || "Scoping";
-      obj.targetWindow = obj.targetWindow || "TBD"; obj.dri = obj.dri || "";
-      onAdd(obj).then(() => onClose()).catch((e) => setErr(e.message));
-    } catch { setErr("That isn't valid JSON — check for trailing commas or missing quotes."); }
+    if (!f.title.trim()) { setErr("Title is required."); return; }
+    const base = f.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "project";
+    let id = base, n = 2;
+    while (existing.some((p) => p.id === id)) { id = `${base}-${n++}`; }
+    const obj = {
+      id, code: id.toUpperCase(), title: f.title.trim(), workstream: f.workstream,
+      stakeholder: "", dri: f.dri, targetWindow: f.targetWindow,
+      contractors: [], teams: [], problem: f.problem, solution: f.solution,
+      deliverables: [], roles: [], success: "", dependsOn: [], openItems: [],
+      impact: Number(f.impact), effort: Number(f.effort), size: f.size, status: "Scoping",
+    };
+    onAdd(obj).then(() => onClose()).catch((e) => setErr(e.message));
   };
+
+  const field = { fontFamily: T.body, fontSize: 13, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, width: "100%" };
+  const lbl = { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft, marginBottom: 5, display: "block" };
+
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, width: "min(680px, 100%)", maxHeight: "88vh", overflowY: "auto", padding: 26, fontFamily: T.body }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, width: "min(620px, 100%)", maxHeight: "88vh", overflowY: "auto", padding: 26, fontFamily: T.body }}>
         <h2 style={{ ...h2Style, marginTop: 0 }}>Add a project</h2>
-        <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "6px 0 14px" }}>Paste a project as JSON using the schema below.</p>
-        <button onClick={() => { setText(TEMPLATE_JSON); setErr(""); }} style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, padding: "7px 12px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.paper, color: T.ink, marginBottom: 10 }}>Load schema template</button>
-        <textarea value={text} onChange={(e) => { setText(e.target.value); setErr(""); }} placeholder='{ "id": "spt-01", "title": "...", "workstream": "Support", ... }' style={{ width: "100%", height: 260, fontFamily: T.mono, fontSize: 12, lineHeight: 1.55, padding: 14, borderRadius: 10, border: `1px solid ${T.hairline}`, background: T.paper, color: T.ink, resize: "vertical" }} />
-        {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "8px 0 0" }}>{err}</p>}
-        <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-          <button onClick={submit} style={btnSolid}>Add to portfolio</button>
+        <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "6px 0 16px" }}>Fill the essentials — then deliverables, roles, dependencies, and risks are editable inline on the project once it opens.</p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div><label style={lbl}>TITLE</label><input value={f.title} onChange={(e) => { set("title", e.target.value); setErr(""); }} placeholder="Project title" style={field} /></div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div><label style={lbl}>WORKSTREAM</label><select value={f.workstream} onChange={(e) => set("workstream", e.target.value)} style={field}>{WORKSTREAMS.map((w) => <option key={w} value={w}>{w}</option>)}</select></div>
+            <div><label style={lbl}>TARGET</label><select value={f.targetWindow} onChange={(e) => set("targetWindow", e.target.value)} style={field}>{TARGETS.map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+            <div><label style={lbl}>SIZE</label><select value={f.size} onChange={(e) => set("size", e.target.value)} style={field}>{SIZES.map((s) => <option key={s} value={s}>{s} · {SIZE_POINTS[s]}u</option>)}</select></div>
+            <div><label style={lbl}>IMPACT</label><select value={f.impact} onChange={(e) => set("impact", e.target.value)} style={field}>{[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}</select></div>
+            <div><label style={lbl}>EFFORT</label><select value={f.effort} onChange={(e) => set("effort", e.target.value)} style={field}>{[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}</select></div>
+          </div>
+          <div><label style={lbl}>DRI (optional)</label><input value={f.dri} onChange={(e) => set("dri", e.target.value)} placeholder="Accountable owner" style={field} /></div>
+          <div><label style={lbl}>THE PROBLEM</label><textarea value={f.problem} onChange={(e) => set("problem", e.target.value)} rows={3} placeholder="The pain, who feels it, what it costs" style={{ ...field, resize: "vertical", lineHeight: 1.5 }} /></div>
+          <div><label style={lbl}>THE SOLUTION</label><textarea value={f.solution} onChange={(e) => set("solution", e.target.value)} rows={3} placeholder="The approach in plain language" style={{ ...field, resize: "vertical", lineHeight: 1.5 }} /></div>
+        </div>
+
+        {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "12px 0 0" }}>{err}</p>}
+        <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+          <button onClick={submit} style={btnSolid}>Create & edit</button>
           <button onClick={onClose} style={btnGhost}>Cancel</button>
         </div>
       </div>
@@ -876,8 +1012,15 @@ function GlossaryModal({ onClose }) {
 
 /* ---------- helpers ---------- */
 const h2Style = { fontFamily: T.display, fontWeight: 700, fontSize: 19, letterSpacing: "-0.01em", margin: 0, color: T.ink };
+const thStyle = { padding: "12px 8px", fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color: T.inkSoft, textAlign: "center", background: T.paper };
 const btnGhost = { fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink };
 const btnSolid = { fontFamily: T.body, fontSize: 13, fontWeight: 600, padding: "8px 14px", borderRadius: 8, border: "none", background: T.ink, color: "#fff" };
+const cardText = { margin: 0, fontSize: 13, lineHeight: 1.55, color: T.ink };
+const listReset = { margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 };
+const liRow = { display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, lineHeight: 1.5 };
+const linkBtn = { background: "none", border: "none", fontWeight: 600, color: T.ink, fontSize: 13, textDecoration: "underline", padding: 0, fontFamily: T.body };
+const xBtn = { background: "none", border: "none", color: T.inkSoft, fontSize: 13, padding: "2px 4px", flexShrink: 0 };
+const addBtn = { alignSelf: "flex-start", background: "none", border: `1px dashed ${T.hairline}`, color: T.inkSoft, fontFamily: T.body, fontSize: 12, fontWeight: 500, padding: "5px 10px", borderRadius: 8 };
 
 function SectionTitle({ children }) {
   return <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{children}</span>;

@@ -4,7 +4,7 @@ const SEED = [
   {
     id: "ms-01", code: "MS-01", title: "Multi-Touch Attribution Model",
     workstream: "Marketing Services", stakeholder: "Marketing Services (Paid Media)",
-    dri: "", targetWindow: "Q3 2026", baselineTBD: true,
+    dri: "", targetWindow: "Q3 2026",
     contractors: [], teams: ["Marketing Services", "RevOps", "Data"],
     problem: "Moxie has no unified model linking paid advertising (Meta/Google) to revenue — pipelines only track Meta form submissions and miss primary Google Ads drivers like phone calls. Without it we can't separate organic from paid or see cross-channel patient journeys, so marketing decisions aren't data-backed.",
     solution: "Build a multi-touch attribution architecture that records every interaction (forms, calls, visits, referrals) as a timestamped touchpoint rolling up to bookings, after a Data-led build-vs-buy evaluation.",
@@ -27,7 +27,7 @@ const SEED = [
   {
     id: "ms-02", code: "MS-02", title: "Media Management Platform",
     workstream: "Marketing Services", stakeholder: "Marketing Services (Paid Media)",
-    dri: "", targetWindow: "Q4 2026", baselineTBD: true,
+    dri: "", targetWindow: "Q4 2026",
     contractors: [
       { name: "Empty Cup Digital", scope: "HubSpot components + platform integration", status: "Engaged" },
       { name: "ClickUp Contractor", scope: "v1 paid media workflows", status: "TBD" },
@@ -55,7 +55,7 @@ const SEED = [
   {
     id: "ms-03", code: "MS-03", title: "AI-Powered Creative Production Workflow",
     workstream: "Marketing Services", stakeholder: "Marketing Services (Paid Media)",
-    dri: "", targetWindow: "Q4 2026", baselineTBD: true,
+    dri: "", targetWindow: "Q4 2026",
     contractors: [{ name: "ClickUp Contractor", scope: "Integration and workflow build", status: "TBD" }],
     teams: ["Marketing Services", "RevOps", "Product"],
     problem: "Ad creative production is highly manual — built in Canva/CapCut, then shuffled by hand through FileCamp, Google Drive, and each ad platform. Thin templating means creatives overlap across customers, capping campaign effectiveness across Meta, Google, and SMS.",
@@ -106,7 +106,7 @@ const SEED = [
   {
     id: "sup-01", code: "SUP-01", title: "Account Setup & Visibility",
     workstream: "Supplies", stakeholder: "Supplies team (Shannon Aubert, OAs)",
-    dri: "Shannon Aubert", targetWindow: "Q3 2026", baselineTBD: true,
+    dri: "Shannon Aubert", targetWindow: "Q3 2026",
     contractors: [
       { name: "Empty Cup Digital", scope: "HubSpot object/pipeline build", status: "Engaged" },
       { name: "ClickUp Contractor", scope: "Workflow + integrations", status: "TBD" },
@@ -189,7 +189,7 @@ const SEED = [
   {
     id: "ps-01", code: "PS-01", title: "Increase Tier 0 Visibility in Moxie Suite",
     workstream: "Practice Success", stakeholder: "Practice Success",
-    dri: "", targetWindow: "Q1 2027", baselineTBD: true,
+    dri: "", targetWindow: "Q1 2027",
     contractors: [], teams: ["Practice Success", "RevOps", "Product"],
     problem: "Moxie Concierge is hard for providers to discover and reachable from only limited areas of Moxie Suite, so providers bypass it and contact their PSM for questions Concierge could resolve. Those who find it often don’t know what it handles, taking trial and error before they find value.",
     solution: "Work with Product to increase Concierge visibility and accessibility across more Moxie Suite pages so it’s an obvious resource at any point in a provider’s workflow. Stretch: pre-load Concierge with page-level context at access.",
