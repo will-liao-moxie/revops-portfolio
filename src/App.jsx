@@ -72,17 +72,17 @@ const DEFAULT_ORG = [
   {
     name: "RevOps",
     members: [
-      { name: "Pre-Sales", lead: "Addison Huneycutt", match: ["Pre-Sales"] },
-      { name: "Post-Sales", lead: "New Hire", match: ["Post-Sales"] },
-      { name: "Business Systems", lead: "Will Liao", match: ["Business Systems", "RevOps"] },
+      { name: "Pre-Sales", lead: "Addison Huneycutt" },
+      { name: "Post-Sales", lead: "New Hire" },
+      { name: "Business Systems", lead: "Will Liao" },
     ],
   },
   {
     name: "Contractors",
     members: [
-      { name: "HubSpot", lead: "Empty Cup Digital", match: ["Empty Cup Digital", "HubSpot"] },
-      { name: "Arrows", lead: "LeanLayer", match: ["Arrows", "LeanLayer"] },
-      { name: "ClickUp", lead: "New Contractor", match: ["ClickUp", "Contractor"] },
+      { name: "HubSpot", lead: "Empty Cup Digital" },
+      { name: "Arrows", lead: "LeanLayer" },
+      { name: "ClickUp", lead: "New Contractor" },
     ],
   },
   {
@@ -93,19 +93,19 @@ const DEFAULT_ORG = [
       { name: "Financial Ops", lead: "Andres Palacio" },
       { name: "Client Experience", lead: "Maddy Campbell" },
       { name: "Practice Management", lead: "Valentia Perez" },
-      { name: "AI & Automation", lead: "Ankita Avadhani", match: ["AI", "Automation", "Concierge", "Product"] },
+      { name: "AI & Automation", lead: "Ankita Avadhani" },
     ],
   },
-  { name: "Data", members: [{ name: "Data", lead: "Josh Malarkey", match: ["Data"] }] },
-  { name: "Engineering", members: [{ name: "Engineering", lead: "Ryan Burbank", match: ["Engineering"] }] },
+  { name: "Data", members: [{ name: "Data", lead: "Josh Malarkey" }] },
+  { name: "Engineering", members: [{ name: "Engineering", lead: "Ryan Burbank" }] },
   {
     name: "Customer Growth",
     members: [
-      { name: "Practice Success", lead: "Sarah Thaler", pm: "New Hire PM", match: ["Practice Success"] },
+      { name: "Practice Success", lead: "Sarah Thaler", pm: "New Hire PM" },
       {
         name: "Practice Ops", lead: "Miki Lager", pm: "Jennifer Denton",
         sub: [
-          { name: "Supplies", lead: "Shannon Aubert", match: ["Supplies"] },
+          { name: "Supplies", lead: "Shannon Aubert" },
           { name: "Onboarding", lead: "Leslie Nichols" },
           { name: "MD Ops", lead: "Ashley Pope" },
           { name: "Financial Services", lead: "Jennifer Denton" },
@@ -113,9 +113,9 @@ const DEFAULT_ORG = [
         ],
       },
       {
-        name: "Marketing Services", lead: "Johanna Singer", pm: "Christina Robichaux", match: ["Marketing Services"],
+        name: "Marketing Services", lead: "Johanna Singer", pm: "Christina Robichaux",
         sub: [
-          { name: "Paid Media", lead: "Jenn Peterson", match: ["Paid Media"] },
+          { name: "Paid Media", lead: "Jenn Peterson" },
           { name: "Website", lead: "Christina Robichaux" },
           { name: "Events", lead: "Reyna Bovee" },
         ],
@@ -143,20 +143,20 @@ async function apiWrite(path, method, payload) {
 }
 
 /* ---------- resourcing helpers ---------- */
-function projectHaystack(p) {
-  return [p.workstream, p.stakeholder, p.dri, ...(p.roles || []).map((r) => r.who)].join(" ").toLowerCase();
-}
+/* A team is allocated to a project purely when the project names that team
+   (or its lead) in its Team & resourcing list. */
+function normName(s) { return (s || "").toLowerCase().trim().replace(/\s+/g, " ").replace(/ team$/, ""); }
 function resourceProjects(resource, projects) {
-  const terms = (resource.match && resource.match.length) ? resource.match : [resource.label];
-  return projects.filter((p) => { const h = projectHaystack(p); return terms.some((m) => m && h.includes(m.toLowerCase())); });
+  const names = new Set([normName(resource.label), normName(resource.lead)].filter(Boolean));
+  return projects.filter((p) => (p.roles || []).some((r) => names.has(normName(r.who))));
 }
 function projectLoad(p) { return EFFORT_POINTS[p.effort] || EFFORT_POINTS.M; }
 function allResources(org) {
   const out = [];
   (org || []).forEach((g) => {
     (g.members || []).forEach((m) => {
-      if (m.sub) { out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm, match: m.match }); (m.sub || []).forEach((s) => out.push({ group: g.name, label: s.name, parent: m.name, lead: s.lead, match: s.match })); }
-      else out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm, match: m.match });
+      if (m.sub) { out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm }); (m.sub || []).forEach((s) => out.push({ group: g.name, label: s.name, parent: m.name, lead: s.lead })); }
+      else out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm });
     });
   });
   return out;
@@ -526,7 +526,6 @@ function OrgEditor({ org, onSave }) {
   const [draft, setDraft] = useState(org);
   useEffect(() => { setDraft(org); }, [org]);
   const commit = (next) => { setDraft(next); onSave(next); };
-  const parseMatch = (s) => { const a = (s || "").split(",").map((x) => x.trim()).filter(Boolean); return a.length ? a : undefined; };
 
   const setGroup = (gi, fn) => draft.map((g, i) => (i === gi ? fn(g) : g));
   const setMember = (gi, mi, fn) => setGroup(gi, (g) => ({ ...g, members: g.members.map((m, i) => (i === mi ? fn(m) : m)) }));
@@ -535,7 +534,7 @@ function OrgEditor({ org, onSave }) {
 
   return (
     <div style={{ background: T.paper, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 16 }}>
-      <div style={{ marginBottom: 10 }}><SectionTitle>Manage roster</SectionTitle> <span style={{ fontSize: 12, color: T.inkSoft }}>— add or edit teams, sub-teams, and people. “Matches” are comma-separated terms a project's resource names must contain to count toward this team (defaults to the name).</span></div>
+      <div style={{ marginBottom: 10 }}><SectionTitle>Manage roster</SectionTitle> <span style={{ fontSize: 12, color: T.inkSoft }}>— add or edit teams, sub-teams, and people. A team counts toward a project when the project names that team (or its lead) in its Team &amp; resourcing list.</span></div>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {draft.map((g, gi) => (
           <div key={gi} style={{ border: `1px solid ${T.hairline}`, borderRadius: 10, padding: "10px 12px", background: T.surface }}>
@@ -549,8 +548,7 @@ function OrgEditor({ org, onSave }) {
                   <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                     <input defaultValue={m.name} onBlur={(e) => { if (e.target.value !== m.name) commit(setMember(gi, mi, (x) => ({ ...x, name: e.target.value }))); }} placeholder="Sub-team / unit" style={{ ...inp, fontWeight: 600, width: 150 }} />
                     <input defaultValue={m.lead || ""} onBlur={(e) => { if ((e.target.value || "") !== (m.lead || "")) commit(setMember(gi, mi, (x) => ({ ...x, lead: e.target.value }))); }} placeholder="Lead" style={{ ...inp, width: 130 }} />
-                    <input defaultValue={m.pm || ""} onBlur={(e) => { if ((e.target.value || "") !== (m.pm || "")) commit(setMember(gi, mi, (x) => ({ ...x, pm: e.target.value || undefined }))); }} placeholder="PM" style={{ ...inp, width: 110 }} />
-                    <input defaultValue={(m.match || []).join(", ")} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, match: parseMatch(e.target.value) })))} placeholder="Matches (optional)" style={{ ...inp, flex: 1, minWidth: 120, color: T.inkSoft }} />
+                    <input defaultValue={m.pm || ""} onBlur={(e) => { if ((e.target.value || "") !== (m.pm || "")) commit(setMember(gi, mi, (x) => ({ ...x, pm: e.target.value || undefined }))); }} placeholder="PM" style={{ ...inp, flex: 1, minWidth: 110 }} />
                     <button onClick={() => commit(setGroup(gi, (x) => ({ ...x, members: x.members.filter((_, i) => i !== mi) })))} style={xBtn} aria-label="Delete">✕</button>
                   </div>
                   {(m.sub || []).map((s, si) => (
@@ -558,8 +556,7 @@ function OrgEditor({ org, onSave }) {
                       <span style={{ color: T.inkSoft, fontSize: 12 }}>↳</span>
                       <input defaultValue={s.name} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, name: e.target.value } : y)) })))} placeholder="Resource" style={{ ...inp, width: 130 }} />
                       <input defaultValue={s.lead || ""} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, lead: e.target.value } : y)) })))} placeholder="Lead" style={{ ...inp, width: 120 }} />
-                      <input defaultValue={s.pm || ""} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, pm: e.target.value || undefined } : y)) })))} placeholder="PM" style={{ ...inp, width: 100 }} />
-                      <input defaultValue={(s.match || []).join(", ")} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, match: parseMatch(e.target.value) } : y)) })))} placeholder="Matches" style={{ ...inp, flex: 1, minWidth: 100, color: T.inkSoft }} />
+                      <input defaultValue={s.pm || ""} onBlur={(e) => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.map((y, i) => (i === si ? { ...y, pm: e.target.value || undefined } : y)) })))} placeholder="PM" style={{ ...inp, flex: 1, minWidth: 100 }} />
                       <button onClick={() => commit(setMember(gi, mi, (x) => ({ ...x, sub: x.sub.filter((_, i) => i !== si) })))} style={xBtn} aria-label="Delete">✕</button>
                     </div>
                   ))}
