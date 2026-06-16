@@ -3,11 +3,14 @@ import { put, list } from "@vercel/blob";
 const BLOB_PATHNAME = "projects.json";
 const SETTINGS_PATHNAME = "settings.json";
 
+// The public blob URL is CDN-cached; bust it so reads reflect the latest write.
+function freshUrl(url) { return url + (url.includes("?") ? "&" : "?") + "cb=" + Date.now(); }
+
 async function readJson(pathname, fallback) {
   const { blobs } = await list({ prefix: pathname, token: process.env.BLOB_READ_WRITE_TOKEN });
   const match = blobs.find((b) => b.pathname === pathname) || blobs[0];
   if (!match) return fallback;
-  const res = await fetch(match.url);
+  const res = await fetch(freshUrl(match.url), { cache: "no-store" });
   return await res.json();
 }
 
@@ -37,10 +40,7 @@ export function requireEditKey(req, res) {
 }
 
 export async function getProjects() {
-  const { blobs } = await list({ prefix: BLOB_PATHNAME, token: process.env.BLOB_READ_WRITE_TOKEN });
-  if (!blobs.length) return [];
-  const res = await fetch(blobs[0].url);
-  return await res.json();
+  try { return await readJson(BLOB_PATHNAME, []); } catch { return []; }
 }
 
 export async function saveProjects(projects) {

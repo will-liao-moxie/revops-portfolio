@@ -97,19 +97,6 @@ const ORG = [
   { name: "BizOps", members: [{ name: "BizOps", lead: "Ben Kosowsky", pm: "Maya Kashlan" }] },
 ];
 
-const GLOSSARY = [
-  ["PSM", "Practice Success Manager — the customer's primary point of contact at Moxie"],
-  ["OA", "Operations Associate on the Supplies team — handles account setup and order placement"],
-  ["Tier 0 / Tier 1", "Tier 0 = self-serve support (Concierge, help docs). Tier 1 = first line of human support"],
-  ["Moxie Concierge", "In-product AI assistant inside Moxie Suite that answers provider questions"],
-  ["Omni", "Moxie's analytics and dashboarding layer, built on the Data Warehouse"],
-  ["Snowflake / Data Warehouse", "Central database where data from all systems is combined for reporting"],
-  ["Custom object", "A new record type added to HubSpot to track something it doesn't track by default"],
-  ["Stretch", "Valuable-if-time-allows scope. Not a commitment; the project succeeds without it"],
-  ["DRI", "Directly Responsible Individual — the single accountable owner for a project"],
-  ["Work unit", "One point of build load. Size maps to units: S=1, M=2, L=3, XL=4"],
-];
-
 /* ---------- edit lock ---------- */
 const EDIT_PW = "12345678";
 const KEY_STORE = "portfolio_edit_key";
@@ -207,7 +194,6 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [wsFilter, setWsFilter] = useState("All");
   const [showAdd, setShowAdd] = useState(false);
-  const [showGlossary, setShowGlossary] = useState(false);
   const [unlocked, setUnlocked] = useState(() => getEditKey() === EDIT_PW);
 
   const refresh = async () => {
@@ -238,6 +224,7 @@ export default function App() {
     catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
   };
   const addProject = async (proj) => { await apiWrite("/api/projects", "POST", proj); await refresh(); setSelectedId(proj.id); };
+  const addProjects = async (list) => { for (const proj of list) { await apiWrite("/api/projects", "POST", proj); } await refresh(); };
   const removeProject = async (id) => {
     if (!window.confirm("Remove this project from the portfolio?")) return;
     try { await apiWrite("/api/projects", "DELETE", { id }); setSelectedId(null); await refresh(); }
@@ -280,7 +267,6 @@ export default function App() {
             <p style={{ margin: "8px 0 0", fontSize: 13.5, color: T.inkSoft, maxWidth: 560 }}>Scope, priority, sequencing, and resourcing for the RevOps project portfolio — one place.</p>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setShowGlossary(true)} style={btnGhost}>Glossary</button>
             <button onClick={toggleLock} title={unlocked ? "Lock editing" : "Unlock editing"} style={btnGhost}>{unlocked ? "🔓 Editing" : "🔒 Locked"}</button>
             {unlocked && <button onClick={() => setShowAdd(true)} style={btnSolid}>+ Add project</button>}
           </div>
@@ -321,8 +307,7 @@ export default function App() {
       </main>
 
       {selected && <Detail p={selected} byId={byId} unlocked={unlocked} onClose={() => setSelectedId(null)} onUpdate={(patch) => updateProject(selected.id, patch)} onRemove={() => removeProject(selected.id)} onOpen={setSelectedId} />}
-      {showAdd && <AddModal onClose={() => setShowAdd(false)} onAdd={addProject} existing={projects} />}
-      {showGlossary && <GlossaryModal onClose={() => setShowGlossary(false)} />}
+      {showAdd && <AddModal onClose={() => setShowAdd(false)} onAdd={addProject} onBulkAdd={addProjects} existing={projects} />}
     </div>
   );
 }
@@ -931,13 +916,76 @@ function MiniSelect({ value, options, onChange }) {
   );
 }
 
-/* ---------- ADD MODAL (structured) ---------- */
-function AddModal({ onClose, onAdd, existing }) {
+/* ---------- CSV import ---------- */
+const CSV_COLUMNS = ["title", "workstream", "size", "impact", "effort", "target", "status", "dri", "stakeholder", "problem", "solution", "success", "deliverables", "roles", "contractors", "dependsOn", "openItems"];
+const CSV_TEMPLATE = `title,workstream,size,impact,effort,target,status,dri,stakeholder,problem,solution,success,deliverables,roles,contractors,dependsOn,openItems
+"Example Project","Supplies",L,4,3,"Q4 2026","Scoping","Shannon Aubert","Supplies team","The pain and what it costs today.","The approach in plain language.","Measurable outcome and who owns it.","Build the thing | Wire up the sync | *Nice-to-have stretch","RevOps :: Architects and builds | Data :: Pipelines","Empty Cup Digital :: HubSpot build :: Engaged | ClickUp Co :: Workflows :: TBD","SUP-01 :: extends its foundation","Vendor API feasibility unvalidated | Contractor unsourced"`;
+
+function parseCSV(text) {
+  const rows = []; let row = [], cur = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { row.push(cur); cur = ""; }
+    else if (c === "\r") { /* skip */ }
+    else if (c === "\n") { row.push(cur); rows.push(row); row = []; cur = ""; }
+    else cur += c;
+  }
+  if (cur.length || row.length) { row.push(cur); rows.push(row); }
+  return rows.filter((r) => r.some((c) => c.trim() !== ""));
+}
+
+function csvToProjects(text, existing) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) return { projects: [], error: "Need a header row and at least one project row." };
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const at = (r, name) => { const j = header.indexOf(name.toLowerCase()); return j >= 0 ? (r[j] || "").trim() : ""; };
+  if (!header.includes("title")) return { projects: [], error: 'CSV must include a "title" column.' };
+
+  const codeToId = {};
+  existing.forEach((p) => { codeToId[p.code.toLowerCase()] = p.id; codeToId[p.id.toLowerCase()] = p.id; });
+  const used = new Set(existing.map((p) => p.id));
+  const items = (s) => (s ? s.split("|").map((x) => x.trim()).filter(Boolean) : []);
+  const num = (v, d) => { const n = Number(v); return n >= 1 && n <= 5 ? n : d; };
+  const out = [];
+
+  for (let k = 1; k < rows.length; k++) {
+    const r = rows[k];
+    const title = at(r, "title"); if (!title) continue;
+    let ws = at(r, "workstream"); if (!WORKSTREAMS.includes(ws)) ws = "Other";
+    const base = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "project";
+    let id = base, n = 2; while (used.has(id)) id = `${base}-${n++}`; used.add(id);
+    const size = (at(r, "size") || "M").toUpperCase();
+    out.push({
+      id, code: id.toUpperCase(), title, workstream: ws,
+      dri: at(r, "dri"), targetWindow: at(r, "target") || "TBD", stakeholder: at(r, "stakeholder"),
+      problem: at(r, "problem"), solution: at(r, "solution"), success: at(r, "success"),
+      deliverables: items(at(r, "deliverables")).map((t) => t.startsWith("*") ? { text: t.slice(1).trim(), stretch: true } : { text: t, stretch: false }),
+      roles: items(at(r, "roles")).map((e) => { const [who, ...rest] = e.split("::"); return { who: (who || "").trim(), what: rest.join("::").trim() }; }).filter((x) => x.who),
+      contractors: items(at(r, "contractors")).map((e) => { const a = e.split("::").map((x) => x.trim()); return { name: a[0] || "", scope: a[1] || "", status: a[2] === "Engaged" ? "Engaged" : "TBD" }; }).filter((x) => x.name),
+      dependsOn: items(at(r, "dependson")).map((e) => { const a = e.split("::").map((x) => x.trim()); const ref = (a[0] || "").toLowerCase(); return { id: codeToId[ref] || ref, note: a[1] || "" }; }).filter((x) => x.id),
+      openItems: items(at(r, "openitems")),
+      teams: [], impact: num(at(r, "impact"), 3), effort: num(at(r, "effort"), 3),
+      size: SIZES.includes(size) ? size : "M", status: at(r, "status") || "Scoping",
+    });
+  }
+  return { projects: out, error: out.length ? "" : "No rows with a title were found." };
+}
+
+/* ---------- ADD MODAL (form or CSV) ---------- */
+function AddModal({ onClose, onAdd, onBulkAdd, existing }) {
+  const [mode, setMode] = useState("single");
   const [f, setF] = useState({ title: "", workstream: "Marketing Services", size: "M", impact: 3, effort: 3, targetWindow: "Q3 2026", dri: "", problem: "", solution: "" });
+  const [csv, setCsv] = useState("");
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const set = (k, v) => setF((prev) => ({ ...prev, [k]: v }));
+  const parsed = useMemo(() => csvToProjects(csv, existing), [csv, existing]);
 
-  const submit = () => {
+  const submitSingle = () => {
     if (!f.title.trim()) { setErr("Title is required."); return; }
     const base = f.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "project";
     let id = base, n = 2;
@@ -951,60 +999,83 @@ function AddModal({ onClose, onAdd, existing }) {
     };
     onAdd(obj).then(() => onClose()).catch((e) => setErr(e.message));
   };
+  const submitCsv = () => {
+    if (!parsed.projects.length) { setErr(parsed.error || "Nothing to import."); return; }
+    setBusy(true); setErr("");
+    onBulkAdd(parsed.projects).then(() => onClose()).catch((e) => { setErr(e.message); setBusy(false); });
+  };
+  const onFile = (e) => { const file = e.target.files[0]; if (!file) return; const rd = new FileReader(); rd.onload = () => setCsv(String(rd.result || "")); rd.readAsText(file); };
 
   const field = { fontFamily: T.body, fontSize: 13, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, width: "100%" };
   const lbl = { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft, marginBottom: 5, display: "block" };
-
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, width: "min(620px, 100%)", maxHeight: "88vh", overflowY: "auto", padding: 26, fontFamily: T.body }}>
-        <h2 style={{ ...h2Style, marginTop: 0 }}>Add a project</h2>
-        <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "6px 0 16px" }}>Fill the essentials — then deliverables, roles, dependencies, and risks are editable inline on the project once it opens.</p>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div><label style={lbl}>TITLE</label><input value={f.title} onChange={(e) => { set("title", e.target.value); setErr(""); }} placeholder="Project title" style={field} /></div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div><label style={lbl}>WORKSTREAM</label><select value={f.workstream} onChange={(e) => set("workstream", e.target.value)} style={field}>{WORKSTREAMS.map((w) => <option key={w} value={w}>{w}</option>)}</select></div>
-            <div><label style={lbl}>TARGET</label><select value={f.targetWindow} onChange={(e) => set("targetWindow", e.target.value)} style={field}>{TARGETS.map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-            <div><label style={lbl}>SIZE</label><select value={f.size} onChange={(e) => set("size", e.target.value)} style={field}>{SIZES.map((s) => <option key={s} value={s}>{s} · {SIZE_POINTS[s]}u</option>)}</select></div>
-            <div><label style={lbl}>IMPACT</label><select value={f.impact} onChange={(e) => set("impact", e.target.value)} style={field}>{[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}</select></div>
-            <div><label style={lbl}>EFFORT</label><select value={f.effort} onChange={(e) => set("effort", e.target.value)} style={field}>{[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}</select></div>
-          </div>
-          <div><label style={lbl}>DRI (optional)</label><input value={f.dri} onChange={(e) => set("dri", e.target.value)} placeholder="Accountable owner" style={field} /></div>
-          <div><label style={lbl}>THE PROBLEM</label><textarea value={f.problem} onChange={(e) => set("problem", e.target.value)} rows={3} placeholder="The pain, who feels it, what it costs" style={{ ...field, resize: "vertical", lineHeight: 1.5 }} /></div>
-          <div><label style={lbl}>THE SOLUTION</label><textarea value={f.solution} onChange={(e) => set("solution", e.target.value)} rows={3} placeholder="The approach in plain language" style={{ ...field, resize: "vertical", lineHeight: 1.5 }} /></div>
-        </div>
-
-        {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "12px 0 0" }}>{err}</p>}
-        <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
-          <button onClick={submit} style={btnSolid}>Create & edit</button>
-          <button onClick={onClose} style={btnGhost}>Cancel</button>
-        </div>
-      </div>
-    </div>
+  const tab = (k, label) => (
+    <button onClick={() => { setMode(k); setErr(""); }} style={{ fontFamily: T.body, fontSize: 13, fontWeight: mode === k ? 600 : 500, padding: "7px 14px", background: "none", border: "none", color: mode === k ? T.ink : T.inkSoft, borderBottom: mode === k ? `2px solid ${T.ink}` : "2px solid transparent" }}>{label}</button>
   );
-}
 
-/* ---------- GLOSSARY ---------- */
-function GlossaryModal({ onClose }) {
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, width: "min(620px, 100%)", maxHeight: "84vh", overflowY: "auto", padding: 26, fontFamily: T.body }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h2 style={{ ...h2Style, margin: 0 }}>Glossary</h2>
-          <button onClick={onClose} aria-label="Close" style={{ background: "none", border: `1px solid ${T.hairline}`, borderRadius: 8, width: 30, height: 30, color: T.inkSoft }}>✕</button>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, width: "min(660px, 100%)", maxHeight: "88vh", overflowY: "auto", padding: 26, fontFamily: T.body }}>
+        <h2 style={{ ...h2Style, marginTop: 0 }}>Add projects</h2>
+        <div style={{ display: "flex", gap: 4, borderBottom: `1px solid ${T.hairline}`, margin: "12px 0 18px" }}>
+          {tab("single", "Single project")}
+          {tab("csv", "CSV upload")}
         </div>
-        <p style={{ fontSize: 12.5, color: T.inkSoft, margin: "6px 0 14px" }}>Plain-language definitions so every stakeholder reads the same plan.</p>
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          {GLOSSARY.map(([term, def], i) => (
-            <div key={term} style={{ display: "flex", gap: 14, padding: "10px 0", borderTop: i ? `1px solid ${T.hairlineSoft}` : "none" }}>
-              <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 600, minWidth: 150, color: T.ink }}>{term}</span>
-              <span style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.5 }}>{def}</span>
+
+        {mode === "single" ? (
+          <>
+            <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "0 0 16px" }}>Fill the essentials — deliverables, roles, dependencies, and risks are editable inline on the project once it opens.</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div><label style={lbl}>TITLE</label><input value={f.title} onChange={(e) => { set("title", e.target.value); setErr(""); }} placeholder="Project title" style={field} /></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div><label style={lbl}>WORKSTREAM</label><select value={f.workstream} onChange={(e) => set("workstream", e.target.value)} style={field}>{WORKSTREAMS.map((w) => <option key={w} value={w}>{w}</option>)}</select></div>
+                <div><label style={lbl}>TARGET</label><select value={f.targetWindow} onChange={(e) => set("targetWindow", e.target.value)} style={field}>{TARGETS.map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                <div><label style={lbl}>SIZE</label><select value={f.size} onChange={(e) => set("size", e.target.value)} style={field}>{SIZES.map((s) => <option key={s} value={s}>{s} · {SIZE_POINTS[s]}u</option>)}</select></div>
+                <div><label style={lbl}>IMPACT</label><select value={f.impact} onChange={(e) => set("impact", e.target.value)} style={field}>{[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}</select></div>
+                <div><label style={lbl}>EFFORT</label><select value={f.effort} onChange={(e) => set("effort", e.target.value)} style={field}>{[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}</select></div>
+              </div>
+              <div><label style={lbl}>DRI (optional)</label><input value={f.dri} onChange={(e) => set("dri", e.target.value)} placeholder="Accountable owner" style={field} /></div>
+              <div><label style={lbl}>THE PROBLEM</label><textarea value={f.problem} onChange={(e) => set("problem", e.target.value)} rows={3} placeholder="The pain, who feels it, what it costs" style={{ ...field, resize: "vertical", lineHeight: 1.5 }} /></div>
+              <div><label style={lbl}>THE SOLUTION</label><textarea value={f.solution} onChange={(e) => set("solution", e.target.value)} rows={3} placeholder="The approach in plain language" style={{ ...field, resize: "vertical", lineHeight: 1.5 }} /></div>
             </div>
-          ))}
-        </div>
+            {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "12px 0 0" }}>{err}</p>}
+            <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+              <button onClick={submitSingle} style={btnSolid}>Create & edit</button>
+              <button onClick={onClose} style={btnGhost}>Cancel</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "0 0 12px" }}>Upload or paste CSV to add many projects at once. Hand the format below to your planning agent so its output drops straight in.</p>
+            <div style={{ background: T.paper, border: `1px solid ${T.hairline}`, borderRadius: 10, padding: "12px 14px", marginBottom: 14, fontSize: 12.5, lineHeight: 1.6, color: T.inkSoft }}>
+              <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: T.ink, marginBottom: 6 }}>CSV FORMAT</div>
+              <div>One row per project. Header columns (any order; extras ignored): <span style={{ fontFamily: T.mono, color: T.ink }}>{CSV_COLUMNS.join(", ")}</span>.</div>
+              <div style={{ marginTop: 6 }}>Only <strong>title</strong> is required. <strong>workstream</strong> ∈ {WORKSTREAMS.join(" / ")}; <strong>size</strong> ∈ S/M/L/XL; <strong>impact</strong>/<strong>effort</strong> 1–5.</div>
+              <div style={{ marginTop: 6 }}>List cells separate items with <code style={codeChip}>|</code> and sub-fields with <code style={codeChip}>::</code> —</div>
+              <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                <li><strong>deliverables</strong>: <code style={codeChip}>Build X | Wire sync | *Stretch item</code> (prefix <code style={codeChip}>*</code> = stretch)</li>
+                <li><strong>roles</strong>: <code style={codeChip}>RevOps :: Builds it | Data :: Pipelines</code></li>
+                <li><strong>contractors</strong>: <code style={codeChip}>Empty Cup Digital :: HubSpot build :: Engaged</code> (status Engaged/TBD)</li>
+                <li><strong>dependsOn</strong>: <code style={codeChip}>SUP-01 :: why it's needed</code> (reference an existing project code)</li>
+                <li><strong>openItems</strong>: <code style={codeChip}>Risk one | Assumption two</code></li>
+              </ul>
+              <button onClick={() => setCsv(CSV_TEMPLATE)} style={{ ...addBtn, marginTop: 10 }}>Load example row</button>
+            </div>
+            <label style={lbl}>UPLOAD .CSV</label>
+            <input type="file" accept=".csv,text/csv" onChange={onFile} style={{ fontSize: 12.5, marginBottom: 10 }} />
+            <label style={lbl}>OR PASTE CSV</label>
+            <textarea value={csv} onChange={(e) => { setCsv(e.target.value); setErr(""); }} rows={8} placeholder="title,workstream,size,..." style={{ ...field, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, resize: "vertical" }} />
+            <div style={{ fontSize: 12.5, color: parsed.error ? "#A33D3D" : T.inkSoft, margin: "8px 0 0" }}>
+              {csv.trim() ? (parsed.error || `${parsed.projects.length} project${parsed.projects.length === 1 ? "" : "s"} ready: ${parsed.projects.map((p) => p.title).join(", ")}`) : "Waiting for CSV…"}
+            </div>
+            {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "8px 0 0" }}>{err}</p>}
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <button onClick={submitCsv} disabled={busy || !parsed.projects.length} style={{ ...btnSolid, opacity: busy || !parsed.projects.length ? 0.5 : 1 }}>{busy ? "Importing…" : `Import ${parsed.projects.length || ""} project${parsed.projects.length === 1 ? "" : "s"}`}</button>
+              <button onClick={onClose} style={btnGhost}>Cancel</button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1021,6 +1092,7 @@ const liRow = { display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13
 const linkBtn = { background: "none", border: "none", fontWeight: 600, color: T.ink, fontSize: 13, textDecoration: "underline", padding: 0, fontFamily: T.body };
 const xBtn = { background: "none", border: "none", color: T.inkSoft, fontSize: 13, padding: "2px 4px", flexShrink: 0 };
 const addBtn = { alignSelf: "flex-start", background: "none", border: `1px dashed ${T.hairline}`, color: T.inkSoft, fontFamily: T.body, fontSize: 12, fontWeight: 500, padding: "5px 10px", borderRadius: 8 };
+const codeChip = { fontFamily: T.mono, fontSize: 11.5, background: T.hairlineSoft, color: T.ink, padding: "1px 5px", borderRadius: 4 };
 
 function SectionTitle({ children }) {
   return <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{children}</span>;
