@@ -1,6 +1,32 @@
 import { put, list } from "@vercel/blob";
 
 const BLOB_PATHNAME = "projects.json";
+const SETTINGS_PATHNAME = "settings.json";
+
+async function readJson(pathname, fallback) {
+  const { blobs } = await list({ prefix: pathname, token: process.env.BLOB_READ_WRITE_TOKEN });
+  const match = blobs.find((b) => b.pathname === pathname) || blobs[0];
+  if (!match) return fallback;
+  const res = await fetch(match.url);
+  return await res.json();
+}
+
+async function writeJson(pathname, data) {
+  await put(pathname, JSON.stringify(data), {
+    access: "public",
+    contentType: "application/json",
+    token: process.env.BLOB_READ_WRITE_TOKEN,
+    allowOverwrite: true,
+    addRandomSuffix: false,
+  });
+}
+
+export async function getSettings() {
+  try { return await readJson(SETTINGS_PATHNAME, {}); } catch { return {}; }
+}
+export async function saveSettings(obj) {
+  await writeJson(SETTINGS_PATHNAME, obj || {});
+}
 
 export function requireEditKey(req, res) {
   const key = process.env.EDIT_KEY;

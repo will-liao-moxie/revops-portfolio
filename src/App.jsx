@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from "react";
 
 /* ============================================================
    MOXIE REVOPS — PROJECT PORTFOLIO
-   Structured, comparable project plans.
    Views: Board · Priority Matrix · Sequence · Resourcing
    Presentation-first: viewing is open, editing is password-locked.
    ============================================================ */
@@ -30,8 +29,13 @@ const WS = {
 
 const STATUSES = ["Scoping", "Proposed", "Approved", "In flight", "Blocked", "Done"];
 
+/* sizing — build load each project places on the teams it touches */
+const SIZES = ["S", "M", "L", "XL"];
+const SIZE_POINTS = { S: 1, M: 2, L: 3, XL: 4 };
+const SIZE_LABEL = { S: "Small", M: "Medium", L: "Large", XL: "X-Large" };
+const DEFAULT_CAP = 6;
+
 /* ---------- resourcing taxonomy ---------- */
-/* `match` terms link a resource to the projects that staff it. */
 const ORG = [
   {
     name: "RevOps",
@@ -101,6 +105,7 @@ const GLOSSARY = [
   ["Snowflake / Data Warehouse", "Central database where data from all systems is combined for reporting"],
   ["Custom object", "A new record type added to HubSpot to track something it doesn't track by default"],
   ["Stretch", "Valuable-if-time-allows scope. Not a commitment; the project succeeds without it"],
+  ["Size (S–XL)", "The build load a project places on each team it touches: S=1 to XL=4 capacity points"],
 ];
 
 const TEMPLATE_JSON = `{
@@ -124,6 +129,7 @@ const TEMPLATE_JSON = `{
   "openItems": ["Unresolved questions or risks"],
   "impact": 3,
   "effort": 3,
+  "size": "M",
   "status": "Scoping"
 }`;
 
@@ -134,8 +140,8 @@ function getEditKey() { try { return localStorage.getItem(KEY_STORE) || ""; } ca
 function storeEditKey(k) { try { localStorage.setItem(KEY_STORE, k); } catch {} }
 function clearEditKey() { try { localStorage.removeItem(KEY_STORE); } catch {} }
 
-async function apiWrite(method, payload) {
-  const res = await fetch("/api/projects", {
+async function apiWrite(path, method, payload) {
+  const res = await fetch(path, {
     method,
     headers: { "Content-Type": "application/json", "x-edit-key": getEditKey() },
     body: JSON.stringify(payload),
@@ -164,37 +170,30 @@ function resourceProjects(resource, projects) {
     return resource.match.some((m) => h.includes(m.toLowerCase()));
   });
 }
-function staffingRows(projects) {
-  const rows = [];
+function projectLoad(p) { return SIZE_POINTS[p.size] || SIZE_POINTS.M; }
+
+/* every leaf resource (member or sub-team), flattened with its group */
+function allResources() {
+  const out = [];
   ORG.forEach((g) => {
     g.members.forEach((m) => {
-      if (m.match) {
-        const ps = resourceProjects(m, projects);
-        if (ps.length) rows.push({ group: g.name, label: m.name, lead: m.lead, projects: ps });
-      }
-      (m.sub || []).forEach((s) => {
-        const ps = resourceProjects(s, projects);
-        if (ps.length) rows.push({ group: g.name, label: `${m.name} · ${s.name}`, lead: s.lead, projects: ps });
-      });
+      if (!m.sub) out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm, match: m.match });
+      (m.sub || []).forEach((s) =>
+        out.push({ group: g.name, label: s.name, parent: m.name, lead: s.lead, match: s.match })
+      );
+      if (m.sub && m.match) out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm, match: m.match });
     });
   });
-  return rows;
+  return out;
 }
 
-/* ---------- small atoms ---------- */
+/* ---------- atoms ---------- */
 function Eyebrow({ children, color }) {
-  return (
-    <span style={{ fontFamily: T.mono, fontSize: 11, letterSpacing: "0.08em", fontWeight: 600, color: color || T.inkSoft }}>
-      {children}
-    </span>
-  );
+  return <span style={{ fontFamily: T.mono, fontSize: 11, letterSpacing: "0.08em", fontWeight: 600, color: color || T.inkSoft }}>{children}</span>;
 }
 function Chip({ children, bg, fg, border }) {
   return (
-    <span style={{
-      fontFamily: T.body, fontSize: 11.5, fontWeight: 500, padding: "3px 9px", borderRadius: 999,
-      background: bg || T.hairlineSoft, color: fg || T.ink, border: border ? `1px solid ${border}` : "none", whiteSpace: "nowrap",
-    }}>
+    <span style={{ fontFamily: T.body, fontSize: 11.5, fontWeight: 500, padding: "3px 9px", borderRadius: 999, background: bg || T.hairlineSoft, color: fg || T.ink, border: border ? `1px solid ${border}` : "none", whiteSpace: "nowrap" }}>
       {children}
     </span>
   );
@@ -202,9 +201,25 @@ function Chip({ children, bg, fg, border }) {
 function ScoreDots({ value, color }) {
   return (
     <span style={{ display: "inline-flex", gap: 3, alignItems: "center" }}>
-      {[1, 2, 3, 4, 5].map((n) => (
-        <span key={n} style={{ width: 7, height: 7, borderRadius: 999, background: n <= value ? color : T.hairline }} />
-      ))}
+      {[1, 2, 3, 4, 5].map((n) => <span key={n} style={{ width: 7, height: 7, borderRadius: 999, background: n <= value ? color : T.hairline }} />)}
+    </span>
+  );
+}
+function SizeChip({ size, ws }) {
+  const s = size || "M";
+  return (
+    <span title={`${SIZE_LABEL[s]} build · ${SIZE_POINTS[s]} pts`} style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 6, background: (ws && ws.soft) || T.hairlineSoft, color: (ws && ws.color) || T.inkSoft, letterSpacing: "0.04em" }}>
+      {s}
+    </span>
+  );
+}
+function initials(name) {
+  return (name || "").split(/[\s·]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+}
+function Avatar({ name, color }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 999, background: (color || T.inkSoft) + "22", color: color || T.inkSoft, fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>
+      {initials(name)}
     </span>
   );
 }
@@ -213,6 +228,7 @@ function ScoreDots({ value, color }) {
 export default function App() {
   const [view, setView] = useState("board");
   const [projects, setProjects] = useState([]);
+  const [capacities, setCapacities] = useState({});
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [selectedId, setSelectedId] = useState(null);
@@ -224,17 +240,11 @@ export default function App() {
   const refresh = async () => {
     try {
       setLoadError("");
-      const r = await fetch("/api/projects");
-      if (!r.ok) {
-        const e = await r.json().catch(() => ({}));
-        throw new Error(e.error || `Could not load projects (${r.status})`);
-      }
-      setProjects(await r.json());
-    } catch (e) {
-      setLoadError(e.message);
-    } finally {
-      setLoaded(true);
-    }
+      const [pr, st] = await Promise.all([fetch("/api/projects"), fetch("/api/settings")]);
+      if (!pr.ok) { const e = await pr.json().catch(() => ({})); throw new Error(e.error || `Could not load projects (${pr.status})`); }
+      setProjects(await pr.json());
+      if (st.ok) { const s = await st.json(); setCapacities(s.capacities || {}); }
+    } catch (e) { setLoadError(e.message); } finally { setLoaded(true); }
   };
   useEffect(() => { refresh(); }, []);
 
@@ -242,8 +252,7 @@ export default function App() {
     if (unlocked) { clearEditKey(); setUnlocked(false); return; }
     const pw = window.prompt("Enter the edit password to unlock editing:");
     if (pw == null) return;
-    if (pw === EDIT_PW) { storeEditKey(pw); setUnlocked(true); }
-    else window.alert("Incorrect password.");
+    if (pw === EDIT_PW) { storeEditKey(pw); setUnlocked(true); } else window.alert("Incorrect password.");
   };
 
   const byId = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p])), [projects]);
@@ -252,23 +261,24 @@ export default function App() {
 
   const updateProject = async (id, patch) => {
     setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-    try { await apiWrite("PATCH", { id, ...patch }); }
+    try { await apiWrite("/api/projects", "PATCH", { id, ...patch }); }
     catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
   };
-  const addProject = async (proj) => { await apiWrite("POST", proj); await refresh(); };
+  const addProject = async (proj) => { await apiWrite("/api/projects", "POST", proj); await refresh(); };
   const removeProject = async (id) => {
     if (!window.confirm("Remove this project from the portfolio?")) return;
-    try { await apiWrite("DELETE", { id }); setSelectedId(null); await refresh(); }
+    try { await apiWrite("/api/projects", "DELETE", { id }); setSelectedId(null); await refresh(); }
     catch (e) { window.alert(`Couldn't remove: ${e.message}`); }
+  };
+  const setCapacity = async (label, value) => {
+    const next = { ...capacities, [label]: value };
+    setCapacities(next);
+    try { await apiWrite("/api/settings", "PUT", { capacities: next }); }
+    catch (e) { window.alert(`Couldn't save capacity: ${e.message}`); refresh(); }
   };
 
   const workstreams = ["All", ...Array.from(new Set(projects.map((p) => p.workstream)))];
-  const views = [
-    ["board", "Board"],
-    ["matrix", "Priority matrix"],
-    ["sequence", "Sequence"],
-    ["resourcing", "Resourcing"],
-  ];
+  const views = [["board", "Board"], ["matrix", "Priority matrix"], ["sequence", "Sequence"], ["resourcing", "Resourcing"]];
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.ink, fontFamily: T.body }}>
@@ -276,7 +286,7 @@ export default function App() {
         @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap');
         * { box-sizing: border-box; }
         button { cursor: pointer; }
-        button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid ${T.ink}; outline-offset: 2px; }
+        button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid ${T.ink}; outline-offset: 2px; }
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
       `}</style>
 
@@ -284,18 +294,12 @@ export default function App() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
           <div>
             <Eyebrow>MOXIE · REVOPS · {projects.length} PROJECTS</Eyebrow>
-            <h1 style={{ fontFamily: T.display, fontWeight: 800, fontSize: 34, lineHeight: 1.05, margin: "6px 0 0", letterSpacing: "-0.02em" }}>
-              Project Portfolio
-            </h1>
-            <p style={{ margin: "8px 0 0", fontSize: 13.5, color: T.inkSoft, maxWidth: 560 }}>
-              The RevOps project portfolio — scope, priority, sequencing, and resourcing in one place.
-            </p>
+            <h1 style={{ fontFamily: T.display, fontWeight: 800, fontSize: 34, lineHeight: 1.05, margin: "6px 0 0", letterSpacing: "-0.02em" }}>Project Portfolio</h1>
+            <p style={{ margin: "8px 0 0", fontSize: 13.5, color: T.inkSoft, maxWidth: 560 }}>Scope, priority, sequencing, and resourcing for the RevOps project portfolio — one place.</p>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={() => setShowGlossary(true)} style={btnGhost}>Glossary</button>
-            <button onClick={toggleLock} title={unlocked ? "Lock editing" : "Unlock editing"} style={btnGhost}>
-              {unlocked ? "🔓 Editing" : "🔒 Locked"}
-            </button>
+            <button onClick={toggleLock} title={unlocked ? "Lock editing" : "Unlock editing"} style={btnGhost}>{unlocked ? "🔓 Editing" : "🔒 Locked"}</button>
             {unlocked && <button onClick={() => setShowAdd(true)} style={btnSolid}>+ Add project</button>}
           </div>
         </div>
@@ -303,13 +307,7 @@ export default function App() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginTop: 22, borderBottom: `1px solid ${T.hairline}`, paddingBottom: 0 }}>
           <nav style={{ display: "flex", gap: 2 }}>
             {views.map(([key, label]) => (
-              <button key={key} onClick={() => setView(key)} style={{
-                fontFamily: T.body, fontSize: 13.5, fontWeight: view === key ? 600 : 500, padding: "10px 14px",
-                background: "none", border: "none", color: view === key ? T.ink : T.inkSoft,
-                borderBottom: view === key ? `2px solid ${T.ink}` : "2px solid transparent", marginBottom: -1,
-              }}>
-                {label}
-              </button>
+              <button key={key} onClick={() => setView(key)} style={{ fontFamily: T.body, fontSize: 13.5, fontWeight: view === key ? 600 : 500, padding: "10px 14px", background: "none", border: "none", color: view === key ? T.ink : T.inkSoft, borderBottom: view === key ? `2px solid ${T.ink}` : "2px solid transparent", marginBottom: -1 }}>{label}</button>
             ))}
           </nav>
           {view !== "resourcing" && (
@@ -318,14 +316,7 @@ export default function App() {
                 const meta = WS[w] || WS.Other;
                 const active = wsFilter === w;
                 return (
-                  <button key={w} onClick={() => setWsFilter(w)} style={{
-                    fontFamily: T.body, fontSize: 12, fontWeight: 500, padding: "5px 11px", borderRadius: 999,
-                    border: `1px solid ${active ? (w === "All" ? T.ink : meta.color) : T.hairline}`,
-                    background: active ? (w === "All" ? T.ink : meta.soft) : T.surface,
-                    color: active ? (w === "All" ? "#fff" : meta.color) : T.inkSoft,
-                  }}>
-                    {w}
-                  </button>
+                  <button key={w} onClick={() => setWsFilter(w)} style={{ fontFamily: T.body, fontSize: 12, fontWeight: 500, padding: "5px 11px", borderRadius: 999, border: `1px solid ${active ? (w === "All" ? T.ink : meta.color) : T.hairline}`, background: active ? (w === "All" ? T.ink : meta.soft) : T.surface, color: active ? (w === "All" ? "#fff" : meta.color) : T.inkSoft }}>{w}</button>
                 );
               })}
             </div>
@@ -334,36 +325,20 @@ export default function App() {
       </header>
 
       <main style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 28px 60px" }}>
-        {!loaded ? (
-          <p style={{ color: T.inkSoft, fontSize: 14 }}>Loading…</p>
-        ) : loadError ? (
-          <div style={{ background: "#FBEAEA", border: "1px solid #E3B9B9", borderRadius: 12, padding: 20, maxWidth: 560 }}>
-            <p style={{ margin: 0, fontWeight: 600, fontSize: 14, color: "#A33D3D" }}>Couldn't load the portfolio</p>
-            <p style={{ margin: "6px 0 12px", fontSize: 13, color: T.inkSoft, lineHeight: 1.5 }}>{loadError}</p>
-            <button onClick={refresh} style={btnSolid}>Try again</button>
-          </div>
-        ) : view === "board" ? (
-          <Board projects={visible} onOpen={setSelectedId} />
-        ) : view === "matrix" ? (
-          <Matrix projects={visible} onOpen={setSelectedId} />
-        ) : view === "sequence" ? (
-          <Sequence projects={visible} byId={byId} onOpen={setSelectedId} />
-        ) : (
-          <Resourcing projects={projects} onOpen={setSelectedId} />
-        )}
+        {!loaded ? <p style={{ color: T.inkSoft, fontSize: 14 }}>Loading…</p>
+          : loadError ? (
+            <div style={{ background: "#FBEAEA", border: "1px solid #E3B9B9", borderRadius: 12, padding: 20, maxWidth: 560 }}>
+              <p style={{ margin: 0, fontWeight: 600, fontSize: 14, color: "#A33D3D" }}>Couldn't load the portfolio</p>
+              <p style={{ margin: "6px 0 12px", fontSize: 13, color: T.inkSoft, lineHeight: 1.5 }}>{loadError}</p>
+              <button onClick={refresh} style={btnSolid}>Try again</button>
+            </div>
+          ) : view === "board" ? <Board projects={visible} onOpen={setSelectedId} />
+            : view === "matrix" ? <Matrix projects={visible} onOpen={setSelectedId} />
+              : view === "sequence" ? <Sequence projects={visible} byId={byId} onOpen={setSelectedId} />
+                : <Resourcing projects={projects} byId={byId} capacities={capacities} unlocked={unlocked} onSetCapacity={setCapacity} onOpen={setSelectedId} />}
       </main>
 
-      {selected && (
-        <Detail
-          p={selected}
-          byId={byId}
-          unlocked={unlocked}
-          onClose={() => setSelectedId(null)}
-          onUpdate={(patch) => updateProject(selected.id, patch)}
-          onRemove={() => removeProject(selected.id)}
-          onOpen={setSelectedId}
-        />
-      )}
+      {selected && <Detail p={selected} byId={byId} unlocked={unlocked} onClose={() => setSelectedId(null)} onUpdate={(patch) => updateProject(selected.id, patch)} onRemove={() => removeProject(selected.id)} onOpen={setSelectedId} />}
       {showAdd && <AddModal onClose={() => setShowAdd(false)} onAdd={addProject} existing={projects} />}
       {showGlossary && <GlossaryModal onClose={() => setShowGlossary(false)} />}
     </div>
@@ -378,23 +353,15 @@ function Board({ projects, onOpen }) {
       {projects.map((p) => {
         const ws = WS[p.workstream] || WS.Other;
         return (
-          <button key={p.id} onClick={() => onOpen(p.id)} style={{
-            textAlign: "left", background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 18,
-            display: "flex", flexDirection: "column", gap: 10, borderTop: `3px solid ${ws.color}`,
-            transition: "box-shadow .15s", fontFamily: T.body,
-          }}
+          <button key={p.id} onClick={() => onOpen(p.id)} style={{ textAlign: "left", background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 18, display: "flex", flexDirection: "column", gap: 10, borderTop: `3px solid ${ws.color}`, transition: "box-shadow .15s", fontFamily: T.body }}
             onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 6px 18px rgba(28,37,33,.08)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <Eyebrow color={ws.color}>{p.code}</Eyebrow>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}><Eyebrow color={ws.color}>{p.code}</Eyebrow><SizeChip size={p.size} ws={ws} /></div>
               <Chip bg={statusBg(p.status)} fg={statusFg(p.status)}>{p.status}</Chip>
             </div>
-            <div style={{ fontFamily: T.display, fontWeight: 700, fontSize: 17.5, lineHeight: 1.2, letterSpacing: "-0.01em", color: T.ink }}>
-              {p.title}
-            </div>
-            <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5, color: T.inkSoft, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-              {p.problem}
-            </p>
+            <div style={{ fontFamily: T.display, fontWeight: 700, fontSize: 17.5, lineHeight: 1.2, letterSpacing: "-0.01em", color: T.ink }}>{p.title}</div>
+            <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5, color: T.inkSoft, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.problem}</p>
             <div style={{ display: "flex", gap: 18, marginTop: 2 }}>
               <span style={{ fontSize: 11, color: T.inkSoft }}>Impact&nbsp;&nbsp;<ScoreDots value={p.impact} color={ws.color} /></span>
               <span style={{ fontSize: 11, color: T.inkSoft }}>Effort&nbsp;&nbsp;<ScoreDots value={p.effort} color={T.ink} /></span>
@@ -415,45 +382,59 @@ function Matrix({ projects, onOpen }) {
   const seen = {};
   const pts = projects.map((p) => {
     const key = `${p.effort}-${p.impact}`;
-    const n = seen[key] || 0;
-    seen[key] = n + 1;
+    const n = seen[key] || 0; seen[key] = n + 1;
     return { p, dx: (n % 2 === 0 ? 1 : -1) * Math.ceil(n / 2) * 26, dy: n * 6 };
   });
   return (
-    <div>
-      <div style={{ marginBottom: 10 }}>
-        <h2 style={h2Style}>Impact vs. effort</h2>
-      </div>
-      <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 10, overflowX: "auto" }}>
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 640, display: "block" }} role="img" aria-label="Impact versus effort matrix">
-          <rect x={PAD} y={30} width={(W - PAD - 20) / 2} height={(H - PAD - 30) / 2} fill="#EDF6F0" rx={8} />
-          {[1, 2, 3, 4, 5].map((n) => (
-            <g key={n}>
-              <line x1={x(n)} y1={30} x2={x(n)} y2={H - PAD} stroke={T.hairlineSoft} />
-              <line x1={PAD} y1={y(n)} x2={W - 20} y2={y(n)} stroke={T.hairlineSoft} />
-              <text x={x(n)} y={H - PAD + 20} textAnchor="middle" fontSize="11" fill={T.inkSoft} fontFamily={T.mono}>{n}</text>
-              <text x={PAD - 14} y={y(n) + 4} textAnchor="end" fontSize="11" fill={T.inkSoft} fontFamily={T.mono}>{n}</text>
-            </g>
-          ))}
-          <line x1={x(3)} y1={30} x2={x(3)} y2={H - PAD} stroke={T.hairline} strokeDasharray="4 4" />
-          <line x1={PAD} y1={y(3)} x2={W - 20} y2={y(3)} stroke={T.hairline} strokeDasharray="4 4" />
-          <text x={PAD + 12} y={48} fontSize="11" fontFamily={T.mono} fontWeight="600" fill="#0E8A74" letterSpacing="1">QUICK WINS</text>
-          <text x={W - 32} y={48} fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.inkSoft} letterSpacing="1" textAnchor="end">BIG BETS</text>
-          <text x={W - 32} y={H - PAD - 12} fontSize="11" fontFamily={T.mono} fontWeight="600" fill="#A33D3D" letterSpacing="1" textAnchor="end">RECONSIDER</text>
-          <text x={(PAD + W - 20) / 2} y={H - 10} textAnchor="middle" fontSize="12" fill={T.ink} fontFamily={T.body} fontWeight="600">Effort →</text>
-          <text x={16} y={(30 + H - PAD) / 2} fontSize="12" fill={T.ink} fontFamily={T.body} fontWeight="600" transform={`rotate(-90 16 ${(30 + H - PAD) / 2})`} textAnchor="middle">Impact →</text>
-          {pts.map(({ p, dx, dy }) => {
-            const ws = WS[p.workstream] || WS.Other;
-            const cx = x(p.effort) + dx, cy = y(p.impact) + dy;
-            return (
-              <g key={p.id} onClick={() => onOpen(p.id)} style={{ cursor: "pointer" }}>
-                <circle cx={cx} cy={cy} r={13} fill={ws.color} opacity="0.92" />
-                <circle cx={cx} cy={cy} r={13} fill="none" stroke="#fff" strokeWidth="2" />
-                <text x={cx} y={cy - 19} textAnchor="middle" fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.ink}>{p.code}</text>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 260px", gap: 18, alignItems: "start" }}>
+      <div>
+        <h2 style={{ ...h2Style, marginBottom: 10 }}>Impact vs. effort</h2>
+        <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 10, overflowX: "auto" }}>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, display: "block" }} role="img" aria-label="Impact versus effort matrix">
+            <rect x={PAD} y={30} width={(W - PAD - 20) / 2} height={(H - PAD - 30) / 2} fill="#EDF6F0" rx={8} />
+            {[1, 2, 3, 4, 5].map((n) => (
+              <g key={n}>
+                <line x1={x(n)} y1={30} x2={x(n)} y2={H - PAD} stroke={T.hairlineSoft} />
+                <line x1={PAD} y1={y(n)} x2={W - 20} y2={y(n)} stroke={T.hairlineSoft} />
+                <text x={x(n)} y={H - PAD + 20} textAnchor="middle" fontSize="11" fill={T.inkSoft} fontFamily={T.mono}>{n}</text>
+                <text x={PAD - 14} y={y(n) + 4} textAnchor="end" fontSize="11" fill={T.inkSoft} fontFamily={T.mono}>{n}</text>
               </g>
+            ))}
+            <line x1={x(3)} y1={30} x2={x(3)} y2={H - PAD} stroke={T.hairline} strokeDasharray="4 4" />
+            <line x1={PAD} y1={y(3)} x2={W - 20} y2={y(3)} stroke={T.hairline} strokeDasharray="4 4" />
+            <text x={PAD + 12} y={48} fontSize="11" fontFamily={T.mono} fontWeight="600" fill="#0E8A74" letterSpacing="1">QUICK WINS</text>
+            <text x={W - 32} y={48} fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.inkSoft} letterSpacing="1" textAnchor="end">BIG BETS</text>
+            <text x={W - 32} y={H - PAD - 12} fontSize="11" fontFamily={T.mono} fontWeight="600" fill="#A33D3D" letterSpacing="1" textAnchor="end">RECONSIDER</text>
+            <text x={(PAD + W - 20) / 2} y={H - 10} textAnchor="middle" fontSize="12" fill={T.ink} fontFamily={T.body} fontWeight="600">Effort →</text>
+            <text x={16} y={(30 + H - PAD) / 2} fontSize="12" fill={T.ink} fontFamily={T.body} fontWeight="600" transform={`rotate(-90 16 ${(30 + H - PAD) / 2})`} textAnchor="middle">Impact →</text>
+            {pts.map(({ p, dx, dy }) => {
+              const ws = WS[p.workstream] || WS.Other;
+              const cx = x(p.effort) + dx, cy = y(p.impact) + dy;
+              return (
+                <g key={p.id} onClick={() => onOpen(p.id)} style={{ cursor: "pointer" }}>
+                  <circle cx={cx} cy={cy} r={13} fill={ws.color} opacity="0.92" />
+                  <circle cx={cx} cy={cy} r={13} fill="none" stroke="#fff" strokeWidth="2" />
+                  <text x={cx} y={cy - 19} textAnchor="middle" fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.ink}>{p.code}</text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+      </div>
+      <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 14 }}>
+        <SectionTitle>Projects</SectionTitle>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+          {projects.map((p) => {
+            const ws = WS[p.workstream] || WS.Other;
+            return (
+              <button key={p.id} onClick={() => onOpen(p.id)} style={{ display: "flex", gap: 9, alignItems: "baseline", textAlign: "left", background: "none", border: "none", padding: "2px 0", fontFamily: T.body }}>
+                <span style={{ width: 9, height: 9, borderRadius: 999, background: ws.color, flexShrink: 0, transform: "translateY(1px)" }} />
+                <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, color: ws.color, minWidth: 42 }}>{p.code}</span>
+                <span style={{ fontSize: 12.5, color: T.ink, lineHeight: 1.35 }}>{p.title}</span>
+              </button>
             );
           })}
-        </svg>
+        </div>
       </div>
     </div>
   );
@@ -471,7 +452,6 @@ function Sequence({ projects, byId, onOpen }) {
   const cols = [[], [], []];
   projects.forEach((p) => cols[Math.min(level(p), 2)].push(p));
   const colTitles = ["Foundations", "Unlocked next", "Later"];
-
   return (
     <div>
       <h2 style={{ ...h2Style, marginBottom: 10 }}>Sequencing by dependency</h2>
@@ -488,17 +468,9 @@ function Sequence({ projects, byId, onOpen }) {
                   const ws = WS[p.workstream] || WS.Other;
                   const needs = (p.dependsOn || []).filter((d) => byId[d.id]).map((d) => byId[d.id].code);
                   return (
-                    <button key={p.id} onClick={() => onOpen(p.id)} style={{
-                      textAlign: "left", background: T.surface, border: `1px solid ${T.hairline}`,
-                      borderLeft: `3px solid ${ws.color}`, borderRadius: 10, padding: "12px 14px", fontFamily: T.body,
-                    }}>
-                      <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-                        <Eyebrow color={ws.color}>{p.code}</Eyebrow>
-                        <span style={{ fontWeight: 600, fontSize: 13.5, color: T.ink }}>{p.title}</span>
-                      </div>
-                      {needs.length > 0 && (
-                        <div style={{ marginTop: 6, fontSize: 11.5, color: T.inkSoft }}>Needs {needs.join(", ")}</div>
-                      )}
+                    <button key={p.id} onClick={() => onOpen(p.id)} style={{ textAlign: "left", background: T.surface, border: `1px solid ${T.hairline}`, borderLeft: `3px solid ${ws.color}`, borderRadius: 10, padding: "12px 14px", fontFamily: T.body }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}><Eyebrow color={ws.color}>{p.code}</Eyebrow><span style={{ fontWeight: 600, fontSize: 13.5, color: T.ink }}>{p.title}</span></div>
+                      {needs.length > 0 && <div style={{ marginTop: 6, fontSize: 11.5, color: T.inkSoft }}>Needs {needs.join(", ")}</div>}
                     </button>
                   );
                 })}
@@ -513,119 +485,110 @@ function Sequence({ projects, byId, onOpen }) {
 }
 
 /* ---------- RESOURCING ---------- */
-function Resourcing({ projects, onOpen }) {
-  const rows = staffingRows(projects);
-  const grouped = useMemo(() => {
-    const m = {};
-    rows.forEach((r) => { (m[r.group] = m[r.group] || []).push(r); });
-    return m;
-  }, [rows]);
+function Resourcing({ projects, capacities, unlocked, onSetCapacity, onOpen }) {
+  const resources = useMemo(() => allResources(), []);
+  const enriched = resources.map((r) => {
+    const ps = resourceProjects(r, projects);
+    const load = ps.reduce((s, p) => s + projectLoad(p), 0);
+    return { ...r, projects: ps, load };
+  });
+
+  // group → { staffed: [...], bench: [labels] }
+  const groups = ORG.map((g) => {
+    const inGroup = enriched.filter((r) => r.group === g.name);
+    const staffed = inGroup.filter((r) => r.projects.length > 0).sort((a, b) => b.load - a.load);
+    const benchSet = [];
+    g.members.forEach((m) => {
+      const leaves = m.sub ? m.sub.map((s) => s.name) : [m.name];
+      leaves.forEach((lbl) => { if (!staffed.find((r) => r.label === lbl)) benchSet.push(lbl); });
+    });
+    return { name: g.name, staffed, bench: Array.from(new Set(benchSet)) };
+  });
+  const active = groups.filter((g) => g.staffed.length > 0);
+  const idle = groups.filter((g) => g.staffed.length === 0);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
-      {/* org structure */}
-      <div>
-        <h2 style={{ ...h2Style, marginBottom: 4 }}>Teams & resources</h2>
-        <p style={{ fontSize: 12.5, color: T.inkSoft, margin: "0 0 14px" }}>The org structure projects draw from.</p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14, alignItems: "start" }}>
-          {ORG.map((g) => (
-            <div key={g.name} style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 16 }}>
-              <div style={{ fontFamily: T.display, fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{g.name}</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                {g.members.map((m) => (
-                  <div key={m.name}>
-                    <MemberLine name={m.name} lead={m.lead} pm={m.pm} />
-                    {(m.sub || []).length > 0 && (
-                      <div style={{ marginTop: 6, paddingLeft: 12, borderLeft: `2px solid ${T.hairlineSoft}`, display: "flex", flexDirection: "column", gap: 6 }}>
-                        {m.sub.map((s) => <MemberLine key={s.name} name={s.name} lead={s.lead} small />)}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <h2 style={{ ...h2Style, marginBottom: 2 }}>Resourcing & capacity</h2>
+          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>Committed build load per team, sized S–XL. Bars past capacity are over-committed.{unlocked ? " Capacities are editable." : ""}</p>
+        </div>
+        <div style={{ display: "flex", gap: 12, fontSize: 11.5, color: T.inkSoft, fontFamily: T.mono }}>
+          {SIZES.map((s) => <span key={s}>{s}={SIZE_POINTS[s]}</span>)}
         </div>
       </div>
 
-      {/* staffing */}
-      <div>
-        <h2 style={{ ...h2Style, marginBottom: 4 }}>Staffing by project</h2>
-        <p style={{ fontSize: 12.5, color: T.inkSoft, margin: "0 0 14px" }}>Which teams and contractors each project draws on. A crowded row is a sequencing constraint.</p>
-        {rows.length === 0 ? <Empty /> : (
-          <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 720, fontFamily: T.body }}>
-              <thead>
-                <tr>
-                  <th style={{ ...thStyle, textAlign: "left", minWidth: 220 }}>Resource</th>
-                  {projects.map((p) => {
-                    const ws = WS[p.workstream] || WS.Other;
-                    return (
-                      <th key={p.id} style={{ ...thStyle, color: ws.color }}>
-                        <button onClick={() => onOpen(p.id)} style={{ background: "none", border: "none", color: ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em" }}>
-                          {p.code}
-                        </button>
-                      </th>
-                    );
-                  })}
-                  <th style={thStyle}>Load</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(grouped).map(([group, grows]) => (
-                  <GroupBlock key={group} group={group} rows={grows} projects={projects} />
-                ))}
-              </tbody>
-            </table>
+      {active.map((g) => (
+        <div key={g.name} style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: "16px 18px" }}>
+          <div style={{ fontFamily: T.display, fontWeight: 700, fontSize: 15, marginBottom: 12 }}>{g.name}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {g.staffed.map((r) => (
+              <CapacityRow key={r.label} r={r} cap={capacities[r.label] ?? DEFAULT_CAP} unlocked={unlocked} onSetCapacity={onSetCapacity} onOpen={onOpen} />
+            ))}
           </div>
-        )}
-      </div>
+          {g.bench.length > 0 && (
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${T.hairlineSoft}`, fontSize: 12, color: T.inkSoft }}>
+              <span style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", marginRight: 8 }}>AVAILABLE</span>
+              {g.bench.join(" · ")}
+            </div>
+          )}
+        </div>
+      ))}
+
+      {idle.length > 0 && (
+        <div style={{ background: T.paper, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: "14px 18px" }}>
+          <span style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: T.inkSoft, marginRight: 8 }}>NOT YET STAFFED</span>
+          <span style={{ fontSize: 12.5, color: T.inkSoft }}>
+            {idle.map((g) => g.name).join(" · ")}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
 
-function GroupBlock({ group, rows, projects }) {
+function CapacityRow({ r, cap, unlocked, onSetCapacity, onOpen }) {
+  const over = r.load > cap;
+  const pct = Math.min(100, (r.load / Math.max(cap, 1)) * 100);
+  const barColor = over ? "#C0463E" : r.load >= cap ? "#C2750F" : "#0E8A74";
   return (
-    <>
-      <tr>
-        <td colSpan={projects.length + 2} style={{ padding: "10px 14px 4px", background: T.paper, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>
-          {group}
-        </td>
-      </tr>
-      {rows.map((r) => {
-        const ids = new Set(r.projects.map((p) => p.id));
-        return (
-          <tr key={r.label} style={{ borderTop: `1px solid ${T.hairlineSoft}` }}>
-            <td style={{ padding: "10px 14px", fontSize: 13 }}>
-              <span style={{ fontWeight: 600 }}>{r.label}</span>
-              {r.lead && <span style={{ marginLeft: 8, fontSize: 11, color: T.inkSoft }}>{r.lead}</span>}
-            </td>
-            {projects.map((p) => (
-              <td key={p.id} style={{ textAlign: "center", padding: "10px 6px" }}>
-                {ids.has(p.id) ? (
-                  <span style={{ display: "inline-block", width: 11, height: 11, borderRadius: 999, background: (WS[p.workstream] || WS.Other).color }} />
-                ) : null}
-              </td>
-            ))}
-            <td style={{ textAlign: "center", fontFamily: T.mono, fontSize: 12, fontWeight: 600, color: r.projects.length >= 4 ? "#A33D3D" : T.inkSoft }}>
-              {r.projects.length}
-            </td>
-          </tr>
-        );
-      })}
-    </>
-  );
-}
-
-function MemberLine({ name, lead, pm, small }) {
-  return (
-    <div style={{ fontSize: small ? 12.5 : 13.5 }}>
-      <span style={{ fontWeight: 600, color: T.ink }}>{name}</span>
-      {(lead || pm) && (
-        <span style={{ marginLeft: 8, fontSize: 11.5, color: T.inkSoft }}>
-          {lead}{pm ? ` · PM ${pm}` : ""}
-        </span>
-      )}
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 200px) 1fr", gap: 16, alignItems: "center" }}>
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Avatar name={r.lead || r.label} color={T.ink} />
+          <div>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: T.ink }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</div>
+            {r.lead && <div style={{ fontSize: 11.5, color: T.inkSoft }}>{r.lead}{r.pm ? ` · PM ${r.pm}` : ""}</div>}
+          </div>
+        </div>
+      </div>
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <div style={{ flex: 1, height: 10, background: T.hairlineSoft, borderRadius: 999, overflow: "hidden" }}>
+            <div style={{ width: `${pct}%`, height: "100%", background: barColor, borderRadius: 999, transition: "width .2s" }} />
+          </div>
+          <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 600, color: over ? "#C0463E" : T.inkSoft, whiteSpace: "nowrap" }}>
+            {r.load}/
+            {unlocked ? (
+              <input type="number" min="1" value={cap} onChange={(e) => onSetCapacity(r.label, Math.max(1, Number(e.target.value) || 1))}
+                style={{ width: 38, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "1px 4px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface }} />
+            ) : cap}
+            {over && " ⚠"}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {r.projects.map((p) => {
+            const ws = WS[p.workstream] || WS.Other;
+            return (
+              <button key={p.id} onClick={() => onOpen(p.id)} title={`${p.title} · ${SIZE_LABEL[p.size || "M"]}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: ws.soft, color: ws.color, border: "none", borderRadius: 999, padding: "3px 10px", fontFamily: T.body, fontSize: 11.5, fontWeight: 500 }}>
+                <span style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</span>
+                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, opacity: 0.8 }}>{p.size || "M"}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -633,115 +596,151 @@ function MemberLine({ name, lead, pm, small }) {
 /* ---------- DETAIL DRAWER ---------- */
 function Detail({ p, byId, unlocked, onClose, onUpdate, onRemove, onOpen }) {
   const ws = WS[p.workstream] || WS.Other;
-  const deps = (p.dependsOn || []);
+  const deps = p.dependsOn || [];
+  const committed = (p.deliverables || []).filter((d) => !d.stretch);
+  const stretch = (p.deliverables || []).filter((d) => d.stretch);
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(640px, 100%)", height: "100%", background: T.surface, overflowY: "auto", boxShadow: "-12px 0 40px rgba(28,37,33,.18)", fontFamily: T.body }}>
-        <div style={{ padding: "22px 26px", borderBottom: `1px solid ${T.hairline}`, position: "sticky", top: 0, background: T.surface, zIndex: 2 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(680px, 100%)", height: "100%", background: T.bg, overflowY: "auto", boxShadow: "-12px 0 40px rgba(28,37,33,.18)", fontFamily: T.body }}>
+        {/* header */}
+        <div style={{ padding: "22px 26px 18px", background: T.surface, borderBottom: `1px solid ${T.hairline}`, position: "sticky", top: 0, zIndex: 2 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
             <div>
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <Eyebrow color={ws.color}>{p.code}</Eyebrow>
-                <Chip bg={ws.soft} fg={ws.color}>{p.workstream}</Chip>
-              </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}><Eyebrow color={ws.color}>{p.code}</Eyebrow><Chip bg={ws.soft} fg={ws.color}>{p.workstream}</Chip></div>
               <h2 style={{ fontFamily: T.display, fontWeight: 800, fontSize: 24, margin: "8px 0 0", letterSpacing: "-0.02em", lineHeight: 1.1 }}>{p.title}</h2>
             </div>
             <button onClick={onClose} aria-label="Close" style={{ background: "none", border: `1px solid ${T.hairline}`, borderRadius: 8, width: 32, height: 32, fontSize: 16, color: T.inkSoft, flexShrink: 0 }}>✕</button>
           </div>
+          {/* stats strip */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 0, marginTop: 16, border: `1px solid ${T.hairline}`, borderRadius: 10, overflow: "hidden" }}>
+            <Stat label="Status">{unlocked ? <MiniSelect value={p.status} options={STATUSES} onChange={(v) => onUpdate({ status: v })} /> : <Chip bg={statusBg(p.status)} fg={statusFg(p.status)}>{p.status}</Chip>}</Stat>
+            <Stat label="Impact">{unlocked ? <MiniSelect value={p.impact} options={[1, 2, 3, 4, 5]} onChange={(v) => onUpdate({ impact: Number(v) })} /> : <ScoreDots value={p.impact} color={ws.color} />}</Stat>
+            <Stat label="Effort">{unlocked ? <MiniSelect value={p.effort} options={[1, 2, 3, 4, 5]} onChange={(v) => onUpdate({ effort: Number(v) })} /> : <ScoreDots value={p.effort} color={T.ink} />}</Stat>
+            <Stat label="Size">{unlocked ? <MiniSelect value={p.size || "M"} options={SIZES} onChange={(v) => onUpdate({ size: v })} /> : <SizeChip size={p.size} ws={ws} />}</Stat>
+          </div>
         </div>
 
-        <div style={{ padding: "20px 26px 40px", display: "flex", flexDirection: "column", gap: 20 }}>
-          {/* scoring strip */}
-          <div style={{ background: T.paper, border: `1px solid ${T.hairline}`, borderRadius: 10, padding: 14, display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center" }}>
-            {unlocked ? (
-              <>
-                <LabeledSelect label="Impact" value={p.impact} options={[1, 2, 3, 4, 5]} onChange={(v) => onUpdate({ impact: Number(v) })} />
-                <LabeledSelect label="Effort" value={p.effort} options={[1, 2, 3, 4, 5]} onChange={(v) => onUpdate({ effort: Number(v) })} />
-                <LabeledSelect label="Status" value={p.status} options={STATUSES} onChange={(v) => onUpdate({ status: v })} />
-              </>
-            ) : (
-              <>
-                <span style={statStyle}>Impact&nbsp;&nbsp;<ScoreDots value={p.impact} color={ws.color} /></span>
-                <span style={statStyle}>Effort&nbsp;&nbsp;<ScoreDots value={p.effort} color={T.ink} /></span>
-                <span style={statStyle}>Status&nbsp;&nbsp;<Chip bg={statusBg(p.status)} fg={statusFg(p.status)}>{p.status}</Chip></span>
-              </>
-            )}
+        <div style={{ padding: "20px 26px 40px", display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* problem / solution cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <AccentCard accent="#C0463E" icon="!" title="The problem">{p.problem}</AccentCard>
+            <AccentCard accent={ws.color} icon="→" title="The solution">{p.solution}</AccentCard>
           </div>
 
-          <Section title="The problem">{p.problem}</Section>
-          <Section title="The proposed solution">{p.solution}</Section>
+          {/* success callout */}
+          <div style={{ background: "#EDF6F0", border: "1px solid #C9E4D6", borderRadius: 12, padding: "14px 16px" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+              <span style={{ fontSize: 14 }}>🎯</span><SectionTitle>Definition of success</SectionTitle>
+            </div>
+            <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.ink }}>{p.success}</p>
+          </div>
 
-          <div>
-            <SectionTitle>What's being built</SectionTitle>
-            <ul style={{ margin: "8px 0 0", padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 7 }}>
-              {(p.deliverables || []).map((d, i) => (
+          {/* deliverables */}
+          <Panel title="What's being built">
+            <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+              {committed.map((d, i) => (
                 <li key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, lineHeight: 1.5 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: d.stretch ? 2 : 999, background: d.stretch ? "#C9A24B" : ws.color, marginTop: 6, flexShrink: 0 }} />
-                  <span>{d.text}{d.stretch && <span style={{ marginLeft: 6, fontSize: 11, color: "#8A6914" }}>· stretch</span>}</span>
+                  <span style={{ color: ws.color, fontWeight: 700, marginTop: 1 }}>✓</span><span>{d.text}</span>
                 </li>
               ))}
             </ul>
-          </div>
+            {stretch.length > 0 && (
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px dashed ${T.hairline}` }}>
+                <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: "#9A6A12", marginBottom: 8 }}>STRETCH — IF TIME ALLOWS</div>
+                <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+                  {stretch.map((d, i) => (
+                    <li key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, lineHeight: 1.5, color: T.inkSoft }}>
+                      <span style={{ color: "#C9A24B", marginTop: 1 }}>○</span><span>{d.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </Panel>
 
-          <div>
-            <SectionTitle>Who does what</SectionTitle>
-            <div style={{ border: `1px solid ${T.hairline}`, borderRadius: 10, overflow: "hidden", marginTop: 8 }}>
+          {/* roles */}
+          <Panel title="Who does what">
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {(p.roles || []).map((r, i) => (
-                <div key={i} style={{ display: "flex", gap: 12, padding: "10px 14px", borderTop: i ? `1px solid ${T.hairlineSoft}` : "none", fontSize: 13 }}>
-                  <span style={{ fontWeight: 600, minWidth: 150, flexShrink: 0 }}>{r.who}</span>
-                  <span style={{ color: T.inkSoft, lineHeight: 1.45 }}>{r.what}</span>
+                <div key={i} style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 13 }}>
+                  <Avatar name={r.who} color={ws.color} />
+                  <div><span style={{ fontWeight: 600 }}>{r.who}</span><div style={{ color: T.inkSoft, lineHeight: 1.45, marginTop: 1 }}>{r.what}</div></div>
                 </div>
               ))}
             </div>
-          </div>
+          </Panel>
 
-          <Section title="Definition of success">{p.success}</Section>
-
+          {/* dependencies */}
           {deps.length > 0 && (
-            <div>
-              <SectionTitle>Depends on</SectionTitle>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+            <Panel title="Depends on">
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {deps.map((d, i) => {
                   const dep = byId[d.id];
                   return (
-                    <div key={i} style={{ fontSize: 13, lineHeight: 1.5 }}>
-                      {dep ? (
-                        <button onClick={() => onOpen(dep.id)} style={{ background: "none", border: "none", fontWeight: 600, color: T.ink, fontSize: 13, textDecoration: "underline", padding: 0, fontFamily: T.body }}>
-                          {dep.code} — {dep.title}
-                        </button>
-                      ) : (
-                        <span style={{ fontWeight: 600 }}>Outside this portfolio</span>
-                      )}
-                      {d.note && <span style={{ color: T.inkSoft }}> — {d.note}</span>}
+                    <div key={i} style={{ fontSize: 13, lineHeight: 1.5, display: "flex", gap: 8, alignItems: "baseline" }}>
+                      <span style={{ color: "#A33D3D", fontWeight: 700 }}>↳</span>
+                      <span>
+                        {dep ? <button onClick={() => onOpen(dep.id)} style={{ background: "none", border: "none", fontWeight: 600, color: T.ink, fontSize: 13, textDecoration: "underline", padding: 0, fontFamily: T.body }}>{dep.code} — {dep.title}</button> : <span style={{ fontWeight: 600 }}>Outside this portfolio</span>}
+                        {d.note && <span style={{ color: T.inkSoft }}> — {d.note}</span>}
+                      </span>
                     </div>
                   );
                 })}
               </div>
-            </div>
+            </Panel>
           )}
 
+          {/* open items */}
           {(p.openItems || []).length > 0 && (
-            <div style={{ background: "#FFF8EC", border: "1px solid #EFDFBC", borderRadius: 10, padding: "12px 16px" }}>
+            <div style={{ background: "#FFF8EC", border: "1px solid #EFDFBC", borderRadius: 12, padding: "12px 16px" }}>
               <SectionTitle>Open items</SectionTitle>
-              <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: "#6E5612" }}>
-                {p.openItems.map((o, i) => <li key={i}>{o}</li>)}
-              </ul>
+              <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: "#6E5612" }}>{p.openItems.map((o, i) => <li key={i}>{o}</li>)}</ul>
             </div>
           )}
 
-          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", borderTop: `1px solid ${T.hairlineSoft}`, paddingTop: 16, fontSize: 12.5, color: T.inkSoft }}>
-            <span><strong style={{ color: T.ink }}>Stakeholder</strong> {p.stakeholder}</span>
-            <span><strong style={{ color: T.ink }}>RevOps role</strong> {p.revopsRole}</span>
+          <div style={{ fontSize: 12.5, color: T.inkSoft, padding: "0 2px" }}>
+            <strong style={{ color: T.ink }}>Stakeholder</strong> · {p.stakeholder} &nbsp;&nbsp; <strong style={{ color: T.ink }}>RevOps role</strong> · {p.revopsRole}
           </div>
 
-          {unlocked && (
-            <button onClick={onRemove} style={{ alignSelf: "flex-start", fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "9px 14px", borderRadius: 8, background: "none", border: "1px solid #D9A0A0", color: "#A33D3D" }}>
-              Remove project
-            </button>
-          )}
+          {unlocked && <button onClick={onRemove} style={{ alignSelf: "flex-start", fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "9px 14px", borderRadius: 8, background: "none", border: "1px solid #D9A0A0", color: "#A33D3D" }}>Remove project</button>}
         </div>
       </div>
     </div>
+  );
+}
+
+function Stat({ label, children }) {
+  return (
+    <div style={{ flex: "1 1 0", minWidth: 90, padding: "9px 12px", background: T.surface, borderRight: `1px solid ${T.hairlineSoft}` }}>
+      <div style={{ fontFamily: T.mono, fontSize: 9.5, letterSpacing: "0.1em", color: T.inkSoft, marginBottom: 5 }}>{label.toUpperCase()}</div>
+      <div style={{ display: "flex", alignItems: "center", minHeight: 22 }}>{children}</div>
+    </div>
+  );
+}
+function AccentCard({ accent, icon, title, children }) {
+  return (
+    <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderLeft: `3px solid ${accent}`, borderRadius: 10, padding: "12px 14px" }}>
+      <div style={{ display: "flex", gap: 7, alignItems: "center", marginBottom: 6 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, borderRadius: 4, background: accent, color: "#fff", fontSize: 11, fontWeight: 700 }}>{icon}</span>
+        <SectionTitle>{title}</SectionTitle>
+      </div>
+      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: T.ink }}>{children}</p>
+    </div>
+  );
+}
+function Panel({ title, children }) {
+  return (
+    <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: "14px 16px" }}>
+      <div style={{ marginBottom: 10 }}><SectionTitle>{title}</SectionTitle></div>
+      {children}
+    </div>
+  );
+}
+function MiniSelect({ value, options, onChange }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, padding: "3px 6px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink }}>
+      {options.map((o) => <option key={o} value={o}>{o}</option>)}
+    </select>
   );
 }
 
@@ -755,9 +754,7 @@ function AddModal({ onClose, onAdd, existing }) {
       if (!obj.id || !obj.title || !obj.workstream) { setErr("Needs at least id, title, and workstream."); return; }
       if (existing.some((p) => p.id === obj.id)) { setErr(`A project with id "${obj.id}" already exists — pick a new code.`); return; }
       obj.code = obj.code || obj.id.toUpperCase();
-      obj.impact = obj.impact || 3;
-      obj.effort = obj.effort || 3;
-      obj.status = obj.status || "Scoping";
+      obj.impact = obj.impact || 3; obj.effort = obj.effort || 3; obj.size = obj.size || "M"; obj.status = obj.status || "Scoping";
       onAdd(obj).then(() => onClose()).catch((e) => setErr(e.message));
     } catch { setErr("That isn't valid JSON — check for trailing commas or missing quotes."); }
   };
@@ -766,11 +763,8 @@ function AddModal({ onClose, onAdd, existing }) {
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, width: "min(680px, 100%)", maxHeight: "88vh", overflowY: "auto", padding: 26, fontFamily: T.body }}>
         <h2 style={{ ...h2Style, marginTop: 0 }}>Add a project</h2>
         <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "6px 0 14px" }}>Paste a project as JSON using the schema below.</p>
-        <button onClick={() => { setText(TEMPLATE_JSON); setErr(""); }} style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, padding: "7px 12px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.paper, color: T.ink, marginBottom: 10 }}>
-          Load schema template
-        </button>
-        <textarea value={text} onChange={(e) => { setText(e.target.value); setErr(""); }} placeholder='{ "id": "spt-01", "title": "...", "workstream": "Support", ... }'
-          style={{ width: "100%", height: 260, fontFamily: T.mono, fontSize: 12, lineHeight: 1.55, padding: 14, borderRadius: 10, border: `1px solid ${T.hairline}`, background: T.paper, color: T.ink, resize: "vertical" }} />
+        <button onClick={() => { setText(TEMPLATE_JSON); setErr(""); }} style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, padding: "7px 12px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.paper, color: T.ink, marginBottom: 10 }}>Load schema template</button>
+        <textarea value={text} onChange={(e) => { setText(e.target.value); setErr(""); }} placeholder='{ "id": "spt-01", "title": "...", "workstream": "Support", ... }' style={{ width: "100%", height: 260, fontFamily: T.mono, fontSize: 12, lineHeight: 1.55, padding: 14, borderRadius: 10, border: `1px solid ${T.hairline}`, background: T.paper, color: T.ink, resize: "vertical" }} />
         {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "8px 0 0" }}>{err}</p>}
         <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
           <button onClick={submit} style={btnSolid}>Add to portfolio</button>
@@ -806,38 +800,12 @@ function GlossaryModal({ onClose }) {
 
 /* ---------- helpers ---------- */
 const h2Style = { fontFamily: T.display, fontWeight: 700, fontSize: 19, letterSpacing: "-0.01em", margin: 0, color: T.ink };
-const thStyle = { padding: "12px 8px", fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color: T.inkSoft, textAlign: "center", background: T.paper };
-const statStyle = { display: "inline-flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, color: T.ink, fontFamily: T.body };
 const btnGhost = { fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink };
 const btnSolid = { fontFamily: T.body, fontSize: 13, fontWeight: 600, padding: "8px 14px", borderRadius: 8, border: "none", background: T.ink, color: "#fff" };
 
 function SectionTitle({ children }) {
-  return <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{children}</div>;
+  return <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{children}</span>;
 }
-function Section({ title, children }) {
-  return (
-    <div>
-      <SectionTitle>{title}</SectionTitle>
-      <p style={{ margin: "7px 0 0", fontSize: 13.5, lineHeight: 1.62, color: T.ink }}>{children}</p>
-    </div>
-  );
-}
-function LabeledSelect({ label, value, options, onChange }) {
-  return (
-    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 600, color: T.ink, fontFamily: T.body }}>
-      {label}
-      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ fontFamily: T.body, fontSize: 13, padding: "6px 8px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink }}>
-        {options.map((o) => <option key={o} value={o}>{o}</option>)}
-      </select>
-    </label>
-  );
-}
-function statusBg(s) {
-  return { Scoping: "#EBEFF1", Proposed: "#EFEAFB", Approved: "#E4F3EF", "In flight": "#E0F0FA", Blocked: "#FBEAEA", Done: "#E8F5E2" }[s] || T.hairlineSoft;
-}
-function statusFg(s) {
-  return { Scoping: "#54616B", Proposed: "#6A4FD8", Approved: "#0E8A74", "In flight": "#2371A8", Blocked: "#A33D3D", Done: "#3D7A2E" }[s] || T.inkSoft;
-}
-function Empty() {
-  return <div style={{ textAlign: "center", padding: "60px 20px", color: T.inkSoft, fontSize: 14 }}>Nothing here yet.</div>;
-}
+function statusBg(s) { return { Scoping: "#EBEFF1", Proposed: "#EFEAFB", Approved: "#E4F3EF", "In flight": "#E0F0FA", Blocked: "#FBEAEA", Done: "#E8F5E2" }[s] || T.hairlineSoft; }
+function statusFg(s) { return { Scoping: "#54616B", Proposed: "#6A4FD8", Approved: "#0E8A74", "In flight": "#2371A8", Blocked: "#A33D3D", Done: "#3D7A2E" }[s] || T.inkSoft; }
+function Empty() { return <div style={{ textAlign: "center", padding: "60px 20px", color: T.inkSoft, fontSize: 14 }}>Nothing here yet.</div>; }

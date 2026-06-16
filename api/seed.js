@@ -26,7 +26,7 @@ const SEED = [
     ],
     success: "Accurate, actionable revenue reporting per practice (including phone calls). The model deduplicates touches and distinguishes organic from paid, with visibility in Omni and Practice Accelerator.",
     dependsOn: [], openItems: ["No baseline metric or target defined", "No effort estimate yet"],
-    impact: 5, effort: 5, status: "Scoping",
+    impact: 5, effort: 5, size: "XL", status: "Scoping",
   },
   {
     id: "ms-02", code: "MS-02", title: "Media Management Platform",
@@ -55,7 +55,7 @@ const SEED = [
     success: "ClickUp v1 workflows live as interim; selected platform live with per-client separation before end of year. Materially reduced manual ad configuration; platform used for spend optimization decisions.",
     dependsOn: [{ id: "ms-01", note: "Long-term platform effectiveness requires the attribution model" }],
     openItems: ["ClickUp contractor unsourced", "“Materially reduced” not baselined"],
-    impact: 4, effort: 4, status: "Scoping",
+    impact: 4, effort: 4, size: "L", status: "Scoping",
   },
   {
     id: "ms-03", code: "MS-03", title: "AI-Powered Creative Production Workflow",
@@ -80,7 +80,7 @@ const SEED = [
     success: "Creative team produces more differentiated ad creatives across all paid channels in meaningfully less time, with reduced manual file handling — on a foundation that can absorb attribution and media platform inputs as those mature.",
     dependsOn: [],
     openItems: ["ClickUp contractor unsourced", "“Meaningfully less time” not baselined"],
-    impact: 4, effort: 3, status: "Scoping",
+    impact: 4, effort: 3, size: "M", status: "Scoping",
   },
   {
     id: "ms-04", code: "MS-04", title: "Meta Ads Segment-Based Service Gating",
@@ -106,7 +106,7 @@ const SEED = [
     ],
     success: "Customers and PSMs are technically unable to submit Meta Ads requests outside their segment’s eligibility — invalid requests are blocked or flagged at the system level before reaching the Meta Ads team.",
     dependsOn: [], openItems: ["ClickUp contractor unsourced", "Assumes segment field is populated and current in HubSpot"],
-    impact: 3, effort: 2, status: "Scoping",
+    impact: 3, effort: 2, size: "S", status: "Scoping",
   },
   {
     id: "sup-01", code: "SUP-01", title: "Account Setup & Visibility",
@@ -135,7 +135,7 @@ const SEED = [
     ],
     success: "PSMs and Providers find setup status without contacting the Supplies team — Slack status inquiries drop materially within 60 days of launch. OAs work entirely out of ClickUp with no Google Sheets reliance.",
     dependsOn: [], openItems: ["ClickUp contractor unsourced", "Slack-inquiry baseline not yet measured"],
-    impact: 4, effort: 3, status: "Scoping",
+    impact: 4, effort: 3, size: "M", status: "Scoping",
   },
   {
     id: "sup-02", code: "SUP-02", title: "Ordering Process Improvements",
@@ -161,7 +161,7 @@ const SEED = [
     success: "OAs no longer manually log into vendor portals for routine orders; orders no longer dropped or mis-placed for lack of task structure. Fulfillment status checked from a single dashboard rather than per-vendor.",
     dependsOn: [{ id: "sup-01", note: "Extends SUP-01’s ClickUp + Intercom notification foundation" }],
     openItems: ["Contractor unsourced", "Vendor API feasibility unvalidated per supplier"],
-    impact: 4, effort: 4, status: "Scoping",
+    impact: 4, effort: 4, size: "L", status: "Scoping",
   },
   {
     id: "sup-03", code: "SUP-03", title: "Spend & Rebate Reporting",
@@ -191,7 +191,7 @@ const SEED = [
     success: "Supplies team sees in real time where spend stands vs. each rebate threshold, with review tasks surfaced automatically. PSMs reference a provider’s spend history directly from HubSpot without contacting the Supplies team.",
     dependsOn: [],
     openItems: ["ClickUp contractor unsourced", "Rebate commitments need structured capture before modeling"],
-    impact: 3, effort: 3, status: "Scoping",
+    impact: 3, effort: 3, size: "M", status: "Scoping",
   },
   {
     id: "ps-01", code: "PS-01", title: "Increase Tier 0 Visibility in Moxie Suite",
@@ -212,7 +212,7 @@ const SEED = [
     success: "Provider adoption of Concierge increases meaningfully by usage volume — rollout gated on sufficient Tier 1 support capacity to absorb the expected increase in escalations.",
     dependsOn: [],
     openItems: ["Gating project not yet in portfolio", "Concierge usage instrumentation unconfirmed", "“Meaningfully” not baselined"],
-    impact: 3, effort: 2, status: "Scoping",
+    impact: 3, effort: 2, size: "S", status: "Scoping",
   },
 ];
 
