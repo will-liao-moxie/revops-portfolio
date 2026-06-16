@@ -2,6 +2,7 @@ import { getSettings, saveSettings, requireEditKey, parseBody } from "./_lib/kv.
 
 export default async function handler(req, res) {
   try {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
     if (req.method === "GET") {
       return res.status(200).json(await getSettings());
     }

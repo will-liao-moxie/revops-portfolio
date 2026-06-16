@@ -205,7 +205,7 @@ export default function App() {
   const refresh = async () => {
     try {
       setLoadError("");
-      const [pr, st] = await Promise.all([fetch("/api/projects"), fetch("/api/settings")]);
+      const [pr, st] = await Promise.all([fetch("/api/projects", { cache: "no-store" }), fetch("/api/settings", { cache: "no-store" })]);
       if (!pr.ok) { const e = await pr.json().catch(() => ({})); throw new Error(e.error || `Could not load projects (${pr.status})`); }
       setProjects(await pr.json());
       if (st.ok) { const s = await st.json(); setCapacities(s.capacities || {}); setOrg(Array.isArray(s.org) && s.org.length ? s.org : DEFAULT_ORG); }
@@ -747,9 +747,9 @@ function RoleEditor({ items, accent, org, onCommit }) {
         return (
           <div key={i} style={{ display: "flex", gap: 7, alignItems: "flex-start" }}>
             <Avatar name={(matched && matched.lead) || cur || "?"} color={accent} />
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 5 }}>
-              <div style={{ display: "flex", gap: 6 }}>
-                <select value={selVal} onChange={(e) => onWho(e.target.value)} style={{ ...sel, flex: 1 }}>
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+              <div style={{ display: "flex", gap: 6, minWidth: 0 }}>
+                <select value={selVal} onChange={(e) => onWho(e.target.value)} style={{ ...sel, flex: 1, minWidth: 0, maxWidth: "100%" }}>
                   {!matched && cur && <option value="__cur__">{cur} (custom)</option>}
                   {!cur && <option value="" disabled>Select a team / resource…</option>}
                   {opts.map((o) => <option key={o.group + o.label} value={o.label}>{o.group} · {o.label}{o.lead ? ` · ${o.lead}` : ""}</option>)}
@@ -757,9 +757,9 @@ function RoleEditor({ items, accent, org, onCommit }) {
                 </select>
                 <MiniSelect value={r.effort || "M"} options={EFFORTS} onChange={(v) => push(list.map((x, j) => j === i ? { ...x, effort: v } : x))} />
               </div>
-              <input value={r.what} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, what: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="What they do on this project" style={{ fontFamily: T.body, fontSize: 12.5, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.inkSoft }} />
+              <input value={r.what} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, what: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="What they do on this project" style={{ width: "100%", minWidth: 0, boxSizing: "border-box", fontFamily: T.body, fontSize: 12.5, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.inkSoft }} />
             </div>
-            <button onClick={() => push(list.filter((_, j) => j !== i))} style={xBtn} aria-label="Remove">✕</button>
+            <button onClick={() => push(list.filter((_, j) => j !== i))} style={{ ...xBtn, flexShrink: 0 }} aria-label="Remove">✕</button>
           </div>
         );
       })}

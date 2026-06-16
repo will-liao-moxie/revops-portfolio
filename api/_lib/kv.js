@@ -9,10 +9,13 @@ const SETTINGS_PREFIX = "settings-v/";
 const LEGACY = { [PROJECTS_PREFIX]: "projects.json", [SETTINGS_PREFIX]: "settings.json" };
 const token = () => process.env.BLOB_READ_WRITE_TOKEN;
 
+// newest by the ms timestamp embedded in the pathname (reliable), else uploadedAt
+function ver(b) { const m = (b.pathname || "").match(/(\d{10,})/); return m ? Number(m[1]) : new Date(b.uploadedAt).getTime(); }
+
 async function readLatest(prefix, fallback) {
   const { blobs } = await list({ prefix, token: token() });
   if (blobs.length) {
-    blobs.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+    blobs.sort((a, b) => ver(b) - ver(a));
     const res = await fetch(blobs[0].url, { cache: "no-store" });
     return await res.json();
   }
