@@ -1,61 +1,36 @@
-import { put, list, del } from "@vercel/blob";
+import { put, list } from "@vercel/blob";
 
-/* Vercel Blob serves public URLs through a CDN that caches the fixed pathname and
-   ignores cache-busting query params — so overwriting a single file (projects.json)
-   yields stale reads. Instead we write each update to a NEW versioned URL (never
-   cached → always fresh) and read the newest version, cleaning up old ones. */
-const PROJECTS_PREFIX = "projects-v/";
-const SETTINGS_PREFIX = "settings-v/";
-const LEGACY = { [PROJECTS_PREFIX]: "projects.json", [SETTINGS_PREFIX]: "settings.json" };
+/* Single-file storage. We NEVER delete blobs (deletes previously caused data loss).
+   Reads pick the newest version of the file and fetch it cache-busted so they're fresh. */
+const PROJECTS = "projects.json";
+const SETTINGS = "settings.json";
 const token = () => process.env.BLOB_READ_WRITE_TOKEN;
+function freshUrl(u) { return u + (u.includes("?") ? "&" : "?") + "cb=" + Date.now(); }
 
-// newest by the ms timestamp embedded in the pathname (reliable), else uploadedAt
-function ver(b) { const m = (b.pathname || "").match(/(\d{10,})/); return m ? Number(m[1]) : new Date(b.uploadedAt).getTime(); }
-
-async function readLatest(prefix, fallback) {
-  const { blobs } = await list({ prefix, token: token() });
-  if (blobs.length) {
-    blobs.sort((a, b) => ver(b) - ver(a));
-    const res = await fetch(blobs[0].url, { cache: "no-store" });
-    return await res.json();
-  }
-  // migrate-on-read from the legacy single-file path, if present
-  const legacy = LEGACY[prefix];
-  if (legacy) {
-    const { blobs: lb } = await list({ prefix: legacy, token: token() });
-    const m = lb.find((b) => b.pathname === legacy);
-    if (m) { const res = await fetch(m.url + "?cb=" + Date.now(), { cache: "no-store" }); return await res.json(); }
-  }
-  return fallback;
+async function readOne(pathname, fallback) {
+  const { blobs } = await list({ prefix: pathname, token: token() });
+  const matches = blobs.filter((b) => b.pathname === pathname);
+  if (!matches.length) return fallback;
+  matches.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+  const res = await fetch(freshUrl(matches[0].url), { cache: "no-store" });
+  return await res.json();
 }
 
-async function writeLatest(prefix, data) {
-  const res = await put(`${prefix}${Date.now()}.json`, JSON.stringify(data), {
-    access: "public", contentType: "application/json", token: token(), addRandomSuffix: true,
+async function writeOne(pathname, data) {
+  await put(pathname, JSON.stringify(data), {
+    access: "public",
+    contentType: "application/json",
+    token: token(),
+    allowOverwrite: true,
+    addRandomSuffix: false,
+    cacheControlMaxAge: 0,
   });
-  // best-effort: drop all older versions (and the legacy file) so reads stay cheap
-  try {
-    const { blobs } = await list({ prefix, token: token() });
-    const stale = blobs.filter((b) => b.url !== res.url).map((b) => b.url);
-    const legacy = LEGACY[prefix];
-    if (legacy) { const { blobs: lb } = await list({ prefix: legacy, token: token() }); lb.forEach((b) => { if (b.pathname === legacy) stale.push(b.url); }); }
-    if (stale.length) await del(stale, { token: token() });
-  } catch {}
-  return res;
 }
 
-export async function getProjects() {
-  try { return await readLatest(PROJECTS_PREFIX, []); } catch { return []; }
-}
-export async function saveProjects(projects) {
-  await writeLatest(PROJECTS_PREFIX, projects);
-}
-export async function getSettings() {
-  try { return await readLatest(SETTINGS_PREFIX, {}); } catch { return {}; }
-}
-export async function saveSettings(obj) {
-  await writeLatest(SETTINGS_PREFIX, obj || {});
-}
+export async function getProjects() { try { return await readOne(PROJECTS, []); } catch { return []; } }
+export async function saveProjects(projects) { await writeOne(PROJECTS, projects); }
+export async function getSettings() { try { return await readOne(SETTINGS, {}); } catch { return {}; } }
+export async function saveSettings(obj) { await writeOne(SETTINGS, obj || {}); }
 
 export function requireEditKey(req, res) {
   const key = process.env.EDIT_KEY;
