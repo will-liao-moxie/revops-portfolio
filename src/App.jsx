@@ -442,18 +442,21 @@ function Matrix({ projects, onOpen }) {
 /* ---------- SEQUENCE (by target window, dependency arrows) ---------- */
 function Sequence({ projects, byId, onOpen }) {
   if (!projects.length) return <Empty />;
-  const labels = Array.from(new Set(projects.map((p) => p.targetWindow || "TBD"))).sort((a, b) => targetRank(a) - targetRank(b));
-  const colIndex = Object.fromEntries(labels.map((l, i) => [l, i]));
-  const cols = labels.map(() => []);
-  projects.forEach((p) => cols[colIndex[p.targetWindow || "TBD"]].push(p));
+  const quarters = Array.from(new Set(projects.map((p) => p.targetWindow || "TBD"))).sort((a, b) => targetRank(a) - targetRank(b));
+  const qIndex = Object.fromEntries(quarters.map((q, i) => [q, i]));
+  const lanes = []; projects.forEach((p) => { const w = p.workstream || "Other"; if (!lanes.includes(w)) lanes.push(w); });
+  const cell = {}; lanes.forEach((w) => { cell[w] = {}; quarters.forEach((q) => { cell[w][q] = []; }); });
+  projects.forEach((p) => cell[p.workstream || "Other"][p.targetWindow || "TBD"].push(p));
 
-  const NODE_W = 190, NODE_H = 52, V_GAP = 14, COL_GAP = 64, TOP = 40, LEFT = 8;
-  const colX = (i) => LEFT + i * (NODE_W + COL_GAP);
+  const NODE_W = 186, NODE_H = 50, V_GAP = 12, COL_GAP = 54, TOP = 40, GUTTER = 150, PADY = 14;
+  const colX = (i) => GUTTER + i * (NODE_W + COL_GAP);
+  const laneRows = {}; lanes.forEach((w) => { laneRows[w] = Math.max(1, ...quarters.map((q) => cell[w][q].length)); });
+  const laneY = {}, laneH = {}; let acc = TOP;
+  lanes.forEach((w) => { laneY[w] = acc; laneH[w] = PADY + laneRows[w] * (NODE_H + V_GAP); acc += laneH[w]; });
   const pos = {};
-  cols.forEach((col, i) => col.forEach((p, r) => { pos[p.id] = { x: colX(i), y: TOP + r * (NODE_H + V_GAP) }; }));
-  const maxRows = Math.max(1, ...cols.map((c) => c.length));
-  const width = colX(labels.length - 1) + NODE_W + LEFT;
-  const height = TOP + maxRows * (NODE_H + V_GAP) + 6;
+  lanes.forEach((w) => quarters.forEach((q) => cell[w][q].forEach((p, r) => { pos[p.id] = { x: colX(qIndex[q]), y: laneY[w] + PADY / 2 + r * (NODE_H + V_GAP) }; })));
+  const width = colX(quarters.length - 1) + NODE_W + 16;
+  const height = acc + 6;
   const edges = [];
   projects.forEach((p) => (p.dependsOn || []).forEach((d) => { if (pos[d.id] && pos[p.id]) edges.push([d.id, p.id]); }));
   const trunc = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
@@ -461,28 +464,44 @@ function Sequence({ projects, byId, onOpen }) {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-        <h2 style={h2Style}>Sequence by target window</h2>
-        <span style={{ fontSize: 12, color: T.inkSoft }}>Columns are target quarters; arrows point from a prerequisite to what it unlocks.</span>
+        <h2 style={h2Style}>Sequence by workstream × quarter</h2>
+        <span style={{ fontSize: 12, color: T.inkSoft }}>Lanes are workstreams, columns are target quarters; arrows point from a prerequisite to what it unlocks.</span>
       </div>
       <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12, overflowX: "auto" }}>
-        <svg width={Math.max(width, 280)} height={height} style={{ display: "block" }} role="img" aria-label="Sequence by target window">
+        <svg width={Math.max(width, 280)} height={height} style={{ display: "block" }} role="img" aria-label="Sequence by workstream and quarter">
           <defs><marker id="seqArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#A33D3D" /></marker></defs>
-          {labels.map((l, i) => <text key={l} x={colX(i)} y={20} fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.inkSoft} letterSpacing="0.06em">{l.toUpperCase()}</text>)}
+          {/* lane bands + labels */}
+          {lanes.map((w, li) => {
+            const ws = wsMeta(w);
+            return (
+              <g key={w}>
+                {li % 2 === 1 && <rect x={0} y={laneY[w]} width={width} height={laneH[w]} fill={T.paper} />}
+                <rect x={0} y={laneY[w]} width={4} height={laneH[w]} fill={ws.color} />
+                <line x1={0} y1={laneY[w]} x2={width} y2={laneY[w]} stroke={T.hairline} />
+                <text x={12} y={laneY[w] + laneH[w] / 2 + 4} fontSize="11.5" fontFamily={T.body} fontWeight="700" fill={ws.color}>{trunc(w, 18)}</text>
+              </g>
+            );
+          })}
+          {/* quarter column guides + headers */}
+          {quarters.map((q, i) => <line key={"g" + q} x1={colX(i) - COL_GAP / 2} y1={TOP} x2={colX(i) - COL_GAP / 2} y2={height} stroke={T.hairlineSoft} />)}
+          {quarters.map((q, i) => <text key={q} x={colX(i)} y={20} fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.inkSoft} letterSpacing="0.06em">{q.toUpperCase()}</text>)}
+          {/* dependency arrows */}
           {edges.map(([from, to], i) => {
-            const a = pos[from], b = pos[to]; const sameCol = Math.abs(a.x - b.x) < 1;
+            const a = pos[from], b = pos[to]; const sameX = Math.abs(a.x - b.x) < 1;
             const sx = a.x + (b.x >= a.x ? NODE_W : 0), sy = a.y + NODE_H / 2;
             const ex = b.x + (b.x >= a.x ? 0 : NODE_W), ey = b.y + NODE_H / 2; const mx = (sx + ex) / 2;
-            const d = sameCol ? `M ${a.x + NODE_W} ${sy} C ${a.x + NODE_W + 30} ${sy}, ${b.x + NODE_W + 30} ${ey}, ${b.x + NODE_W} ${ey}` : `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
+            const d = sameX ? `M ${a.x + NODE_W} ${sy} C ${a.x + NODE_W + 30} ${sy}, ${b.x + NODE_W + 30} ${ey}, ${b.x + NODE_W} ${ey}` : `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
             return <path key={i} d={d} fill="none" stroke="#A33D3D" strokeWidth="1.6" opacity="0.65" markerEnd="url(#seqArrow)" />;
           })}
+          {/* project nodes */}
           {projects.map((p) => {
-            const ws = wsMeta(p.workstream); const { x: nx, y: ny } = pos[p.id];
+            const ws = wsMeta(p.workstream); const pp = pos[p.id]; if (!pp) return null; const { x: nx, y: ny } = pp;
             return (
               <g key={p.id} onClick={() => onOpen(p.id)} style={{ cursor: "pointer" }}>
                 <rect x={nx} y={ny} width={NODE_W} height={NODE_H} rx={10} fill={T.surface} stroke={T.hairline} />
                 <rect x={nx} y={ny} width={4} height={NODE_H} rx={2} fill={ws.color} />
-                <text x={nx + 15} y={ny + 21} fontSize="10.5" fontFamily={T.mono} fontWeight="600" fill={ws.color} letterSpacing="0.06em">{p.code} · {p.effort || "M"}</text>
-                <text x={nx + 15} y={ny + 38} fontSize="12" fontFamily={T.body} fontWeight="600" fill={T.ink}>{trunc(p.title, 23)}</text>
+                <text x={nx + 15} y={ny + 20} fontSize="10.5" fontFamily={T.mono} fontWeight="600" fill={ws.color} letterSpacing="0.06em">{p.code} · {p.effort || "M"}</text>
+                <text x={nx + 15} y={ny + 37} fontSize="12" fontFamily={T.body} fontWeight="600" fill={T.ink}>{trunc(p.title, 22)}</text>
               </g>
             );
           })}
