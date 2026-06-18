@@ -27,8 +27,10 @@ const WS = {
   "Support": { color: "#B5485D", soft: "#F9EAEE", code: "SPT" },
   "Other": { color: "#54616B", soft: "#EBEFF1", code: "OTH" },
 };
-const WS_PALETTE = ["#6A4FD8", "#0E8A74", "#C2750F", "#B5485D", "#2371A8", "#9A4FBF", "#3D7A2E", "#B5663A"];
-function hashStr(s) { let h = 0; for (let i = 0; i < (s || "").length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+// distinct hues, none matching the known WS colors above
+const WS_PALETTE = ["#2E74C0", "#8E3FB0", "#2E8B57", "#B59A1E", "#1F9AA0", "#3F51B5", "#C04A8E", "#6F9A2E", "#A0552E", "#4FA0A0"];
+const wsColorCache = {};
+let wsColorN = 0;
 function wsPrefix(name) {
   if (!name) return "OTH";
   const words = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
@@ -38,8 +40,12 @@ function wsPrefix(name) {
 function wsMeta(name) {
   if (WS[name]) return WS[name];
   if (!name) return WS.Other;
-  const color = WS_PALETTE[hashStr(name) % WS_PALETTE.length];
-  return { color, soft: color + "1A", code: wsPrefix(name) };
+  if (!wsColorCache[name]) {
+    const color = WS_PALETTE[wsColorN % WS_PALETTE.length];
+    wsColorN += 1;
+    wsColorCache[name] = { color, soft: color + "1A", code: wsPrefix(name) };
+  }
+  return wsColorCache[name];
 }
 function genCode(ws, usedCodes) {
   const pre = wsMeta(ws).code;
