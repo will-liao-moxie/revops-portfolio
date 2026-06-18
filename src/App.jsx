@@ -19,16 +19,17 @@ const T = {
   mono: "'JetBrains Mono', ui-monospace, 'SF Mono', monospace",
 };
 
-/* known workstreams (more can be added freely — unknown ones get a derived color + code prefix) */
+/* known workstreams keep a code prefix; every workstream (known or new) draws its COLOR
+   from one well-separated categorical palette so no two ever look alike. */
 const WS = {
-  "Marketing Services": { color: "#6A4FD8", soft: "#EFEAFB", code: "MS" },
-  "Supplies": { color: "#0E8A74", soft: "#E4F3EF", code: "SUP" },
-  "Practice Success": { color: "#C2750F", soft: "#FAF0E0", code: "PS" },
-  "Support": { color: "#B5485D", soft: "#F9EAEE", code: "SPT" },
-  "Other": { color: "#54616B", soft: "#EBEFF1", code: "OTH" },
+  "Marketing Services": { code: "MS" },
+  "Supplies": { code: "SUP" },
+  "Practice Success": { code: "PS" },
+  "Support": { code: "SPT" },
 };
-// distinct hues, none matching the known WS colors above
-const WS_PALETTE = ["#2E74C0", "#8E3FB0", "#2E8B57", "#B59A1E", "#1F9AA0", "#3F51B5", "#C04A8E", "#6F9A2E", "#A0552E", "#4FA0A0"];
+// curated, mutually-distinct, mid-tone (readable as text) categorical palette
+const WS_PALETTE = ["#3B6EA5", "#C8732B", "#C0453F", "#2E8B70", "#4F8A3D", "#B08A1E", "#8A5FA8", "#C75D8A", "#8A6A4F", "#5B7185"];
+const OTHER_META = { color: "#8A8F98", soft: "#8A8F9822", code: "OTH" };
 const wsColorCache = {};
 let wsColorN = 0;
 function wsPrefix(name) {
@@ -38,12 +39,11 @@ function wsPrefix(name) {
   return name.replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase() || "OTH";
 }
 function wsMeta(name) {
-  if (WS[name]) return WS[name];
-  if (!name) return WS.Other;
+  if (!name || name === "Other") return OTHER_META;
   if (!wsColorCache[name]) {
     const color = WS_PALETTE[wsColorN % WS_PALETTE.length];
     wsColorN += 1;
-    wsColorCache[name] = { color, soft: color + "1A", code: wsPrefix(name) };
+    wsColorCache[name] = { color, soft: color + "22", code: (WS[name] && WS[name].code) || wsPrefix(name) };
   }
   return wsColorCache[name];
 }
