@@ -448,7 +448,7 @@ function Sequence({ projects, byId, onOpen }) {
   const cell = {}; lanes.forEach((w) => { cell[w] = {}; quarters.forEach((q) => { cell[w][q] = []; }); });
   projects.forEach((p) => cell[p.workstream || "Other"][p.targetWindow || "TBD"].push(p));
 
-  const NODE_W = 186, NODE_H = 50, V_GAP = 12, COL_GAP = 54, TOP = 40, GUTTER = 150, PADY = 14;
+  const NODE_W = 196, NODE_H = 74, V_GAP = 12, COL_GAP = 54, TOP = 40, GUTTER = 150, PADY = 14;
   const colX = (i) => GUTTER + i * (NODE_W + COL_GAP);
   const laneRows = {}; lanes.forEach((w) => { laneRows[w] = Math.max(1, ...quarters.map((q) => cell[w][q].length)); });
   const laneY = {}, laneH = {}; let acc = TOP;
@@ -493,16 +493,16 @@ function Sequence({ projects, byId, onOpen }) {
             const d = sameX ? `M ${a.x + NODE_W} ${sy} C ${a.x + NODE_W + 30} ${sy}, ${b.x + NODE_W + 30} ${ey}, ${b.x + NODE_W} ${ey}` : `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
             return <path key={i} d={d} fill="none" stroke="#A33D3D" strokeWidth="1.6" opacity="0.65" markerEnd="url(#seqArrow)" />;
           })}
-          {/* project nodes */}
+          {/* project nodes — HTML so long titles wrap (clamped to 3 lines) instead of truncating */}
           {projects.map((p) => {
             const ws = wsMeta(p.workstream); const pp = pos[p.id]; if (!pp) return null; const { x: nx, y: ny } = pp;
             return (
-              <g key={p.id} onClick={() => onOpen(p.id)} style={{ cursor: "pointer" }}>
-                <rect x={nx} y={ny} width={NODE_W} height={NODE_H} rx={10} fill={T.surface} stroke={T.hairline} />
-                <rect x={nx} y={ny} width={4} height={NODE_H} rx={2} fill={ws.color} />
-                <text x={nx + 15} y={ny + 20} fontSize="10.5" fontFamily={T.mono} fontWeight="600" fill={ws.color} letterSpacing="0.06em">{p.code} · {p.effort || "M"}</text>
-                <text x={nx + 15} y={ny + 37} fontSize="12" fontFamily={T.body} fontWeight="600" fill={T.ink}>{trunc(p.title, 22)}</text>
-              </g>
+              <foreignObject key={p.id} x={nx} y={ny} width={NODE_W} height={NODE_H} onClick={() => onOpen(p.id)} style={{ cursor: "pointer", overflow: "visible" }}>
+                <div xmlns="http://www.w3.org/1999/xhtml" style={{ height: "100%", boxSizing: "border-box", background: T.surface, border: `1px solid ${T.hairline}`, borderLeft: `4px solid ${ws.color}`, borderRadius: 10, padding: "7px 10px", overflow: "hidden", fontFamily: T.body }}>
+                  <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 600, color: ws.color, letterSpacing: "0.06em" }}>{p.code} · {p.effort || "M"}</div>
+                  <div title={p.title} style={{ fontSize: 11.5, fontWeight: 600, color: T.ink, lineHeight: 1.22, marginTop: 2, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.title}</div>
+                </div>
+              </foreignObject>
             );
           })}
         </svg>
@@ -512,9 +512,11 @@ function Sequence({ projects, byId, onOpen }) {
 }
 
 /* ---------- RESOURCING ---------- */
+const TEAM_W = 210, ALLOC_W = 66, CAP_W = 64;
+const FROZEN = { team: { position: "sticky", left: 0, zIndex: 2 }, alloc: { position: "sticky", left: TEAM_W, zIndex: 2 }, cap: { position: "sticky", left: TEAM_W + ALLOC_W, zIndex: 2, borderRight: `1px solid ${T.hairline}` } };
 function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSaveOrg, onOpen }) {
   const [managing, setManaging] = useState(false);
-  const [mode, setMode] = useState("project"); // "project" | "quarter"
+  const [mode, setMode] = useState("quarter"); // "quarter" | "project"
   const exportRoster = () => {
     const blob = new Blob([rosterToCsv(org)], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -540,7 +542,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
         <div>
           <h2 style={{ ...h2Style, marginBottom: 2 }}>Resourcing & allocation</h2>
-          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>{mode === "project" ? "Team roster × projects — each cell is that project's work units." : "Team roster × quarter — each cell sums a team's work units for that quarter. Capacity is per-quarter; cells over it are flagged."}</p>
+          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>{mode === "project" ? "Team roster × projects — each cell is that project's work units. Team and totals stay pinned; project columns scroll." : "Team roster × quarter — each cell sums a team's work units for that quarter (scales to many projects). Capacity is per-quarter; cells over it are flagged."}</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.mono, fontSize: 11.5, color: T.inkSoft }}>
           <button onClick={exportRoster} title="Download the team roster as CSV" style={btnGhost}>↓ Export roster</button>
@@ -552,7 +554,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
 
       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
         <span style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: T.inkSoft, marginRight: 2 }}>VIEW</span>
-        {tab("project", "By project")}{tab("quarter", "By quarter")}
+        {tab("quarter", "By quarter")}{tab("project", "By project")}
       </div>
 
       {managing && unlocked && <OrgEditor org={org} onSave={onSaveOrg} />}
@@ -561,12 +563,12 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760, fontFamily: T.body }}>
           <thead>
             <tr>
-              <th style={{ ...thStyle, textAlign: "left", minWidth: 220 }}>Team / resource</th>
+              <th style={{ ...thStyle, ...FROZEN.team, zIndex: 3, textAlign: "left", minWidth: TEAM_W, width: TEAM_W }}>Team / resource</th>
+              <th style={{ ...thStyle, ...FROZEN.alloc, zIndex: 3, width: ALLOC_W }} title={mode === "project" ? "Total allocated work units" : "Peak quarter load"}>{mode === "project" ? "Alloc" : "Peak"}</th>
+              <th style={{ ...thStyle, ...FROZEN.cap, zIndex: 3, width: CAP_W }}>Cap</th>
               {mode === "project"
                 ? projects.map((p) => { const ws = wsMeta(p.workstream); return <th key={p.id} style={thStyle}><button onClick={() => onOpen(p.id)} title={p.title} style={{ background: "none", border: "none", color: ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em" }}>{p.code}</button></th>; })
                 : quarters.map((q) => <th key={q} style={thStyle}>{q}</th>)}
-              <th style={{ ...thStyle, borderLeft: `1px solid ${T.hairline}` }}>{mode === "project" ? "Allocated" : "Peak/qtr"}</th>
-              <th style={thStyle}>Capacity</th>
             </tr>
           </thead>
           <tbody>
@@ -582,17 +584,17 @@ function ResourceGroup({ group, rows, mode, projects, quarters, capacities, unlo
   const ncols = (mode === "project" ? projects.length : quarters.length) + 3;
   return (
     <>
-      <tr><td colSpan={ncols} style={{ padding: "10px 14px 4px", background: T.paper, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{group}</td></tr>
+      <tr><td colSpan={ncols} style={{ ...FROZEN.team, padding: "10px 14px 4px", background: T.paper, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{group}</td></tr>
       {rows.map((r) => {
-        const cap = capacities[r.label] ?? DEFAULT_CAP; const over = r.peak > cap;
+        const cap = capacities[r.label] ?? DEFAULT_CAP; const over = r.peak > cap; const total = mode === "project" ? r.units : r.peak;
         return (
           <tr key={r.label} style={{ borderTop: `1px solid ${T.hairlineSoft}` }}>
-            <td style={{ padding: "9px 14px", fontSize: 13 }}><span style={{ fontWeight: 600 }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</span>{r.lead && <span style={{ marginLeft: 8, fontSize: 11, color: T.inkSoft }}>{r.lead}{r.pm ? ` · PM ${r.pm}` : ""}</span>}</td>
+            <td style={{ ...FROZEN.team, background: T.surface, padding: "9px 14px", fontSize: 13, width: TEAM_W }}><span style={{ fontWeight: 600 }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</span>{r.lead && <span style={{ marginLeft: 8, fontSize: 11, color: T.inkSoft }}>{r.lead}{r.pm ? ` · PM ${r.pm}` : ""}</span>}</td>
+            <td style={{ ...FROZEN.alloc, background: T.surface, textAlign: "center", fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: over ? "#C0463E" : (total ? T.ink : T.hairline) }}>{total}{over && " ⚠"}</td>
+            <td style={{ ...FROZEN.cap, background: T.surface, textAlign: "center" }}>{unlocked ? <input type="number" min="1" value={cap} onChange={(e) => onSetCapacity(r.label, Math.max(1, Number(e.target.value) || 1))} style={{ width: 44, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "2px 4px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}</td>
             {mode === "project"
               ? projects.map((p) => { const ws = wsMeta(p.workstream); const v = r.unitsBy[p.id]; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px" }}>{v != null ? <span title={`${p.code} · ${v} units`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, background: ws.soft, color: ws.color, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 }}>{v}</span> : null}</td>; })
               : quarters.map((q) => { const v = r.unitsByQ[q] || 0; const oc = v > cap; return <td key={q} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={`${q} · ${v}/${cap}`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, background: oc ? "#FBEAEA" : T.hairlineSoft, color: oc ? "#C0463E" : T.ink, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 }}>{v}{oc ? " ⚠" : ""}</span> : null}</td>; })}
-            <td style={{ textAlign: "center", fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: over ? "#C0463E" : ((mode === "project" ? r.units : r.peak) ? T.ink : T.hairline), borderLeft: `1px solid ${T.hairline}` }}>{mode === "project" ? r.units : r.peak}{over && " ⚠"}</td>
-            <td style={{ textAlign: "center" }}>{unlocked ? <input type="number" min="1" value={cap} onChange={(e) => onSetCapacity(r.label, Math.max(1, Number(e.target.value) || 1))} style={{ width: 46, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "2px 4px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}</td>
           </tr>
         );
       })}
