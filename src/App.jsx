@@ -194,6 +194,7 @@ export default function App() {
   const [view, setView] = useState("board");
   const [projects, setProjects] = useState([]);
   const [capacities, setCapacities] = useState({});
+  const [weeklyCap, setWeeklyCap] = useState({});
   const [org, setOrg] = useState(DEFAULT_ORG);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -208,7 +209,7 @@ export default function App() {
       const [pr, st] = await Promise.all([fetch("/api/projects", { cache: "no-store" }), fetch("/api/settings", { cache: "no-store" })]);
       if (!pr.ok) { const e = await pr.json().catch(() => ({})); throw new Error(e.error || `Could not load projects (${pr.status})`); }
       setProjects(await pr.json());
-      if (st.ok) { const s = await st.json(); setCapacities(s.capacities || {}); setOrg(Array.isArray(s.org) && s.org.length ? s.org : DEFAULT_ORG); }
+      if (st.ok) { const s = await st.json(); setCapacities(s.capacities || {}); setWeeklyCap(s.weeklyCap || {}); setOrg(Array.isArray(s.org) && s.org.length ? s.org : DEFAULT_ORG); }
     } catch (e) { setLoadError(e.message); } finally { setLoaded(true); }
   };
   useEffect(() => { refresh(); }, []);
@@ -246,14 +247,23 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
   const persistSettings = async (next) => {
-    const payload = { capacities: next.capacities ?? capacities, org: next.org ?? org };
+    const payload = { capacities: next.capacities ?? capacities, weeklyCap: next.weeklyCap ?? weeklyCap, org: next.org ?? org };
     try { await apiWrite("/api/settings", "PUT", payload); } catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
   };
   const setCapacity = (label, value) => { const c = { ...capacities, [label]: value }; setCapacities(c); persistSettings({ capacities: c }); };
+  const setWeekly = (person, value) => { const c = { ...weeklyCap, [person]: value }; setWeeklyCap(c); persistSettings({ weeklyCap: c }); };
   const saveOrg = (nextOrg) => { setOrg(nextOrg); persistSettings({ org: nextOrg }); };
+  const importSchedule = async (text) => {
+    const { byProjectId, error, count } = csvToSchedule(text, projects);
+    if (error) throw new Error(error);
+    let res;
+    for (const [id, schedule] of Object.entries(byProjectId)) { res = await apiWrite("/api/projects", "PATCH", { id, schedule }); }
+    if (res && res.projects) setProjects(res.projects); else await refresh();
+    return count;
+  };
 
   const workstreams = ["All", ...Array.from(new Set(projects.map((p) => p.workstream)))];
-  const views = [["board", "Board"], ["matrix", "Priority matrix"], ["sequence", "Sequence"], ["resourcing", "Resourcing"]];
+  const views = [["board", "Board"], ["matrix", "Priority matrix"], ["sequence", "Sequence"], ["resourcing", "Resourcing"], ["schedule", "Schedule"]];
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.ink, fontFamily: T.body }}>
@@ -314,7 +324,8 @@ export default function App() {
           ) : view === "board" ? <Board projects={visible} onOpen={setSelectedId} />
             : view === "matrix" ? <Matrix projects={visible} onOpen={setSelectedId} />
               : view === "sequence" ? <Sequence projects={visible} byId={byId} onOpen={setSelectedId} />
-                : <Resourcing projects={projects} org={org} capacities={capacities} unlocked={unlocked} onSetCapacity={setCapacity} onSaveOrg={saveOrg} onOpen={setSelectedId} />}
+                : view === "resourcing" ? <Resourcing projects={projects} org={org} capacities={capacities} unlocked={unlocked} onSetCapacity={setCapacity} onSaveOrg={saveOrg} onOpen={setSelectedId} />
+                  : <Schedule projects={projects} org={org} weeklyCap={weeklyCap} unlocked={unlocked} onSetWeekly={setWeekly} onImport={importSchedule} onOpen={setSelectedId} />}
       </main>
 
       {selected && <Detail p={selected} byId={byId} org={org} unlocked={unlocked} workstreams={allWorkstreams} onClose={() => setSelectedId(null)} onUpdate={(patch) => updateProject(selected.id, patch)} onRemove={() => removeProject(selected.id)} onOpen={setSelectedId} />}
@@ -936,6 +947,205 @@ function rosterToCsv(org) {
   const lines = [cols.join(",")];
   allResources(org).forEach((r) => { lines.push([r.group, r.label, r.parent || "", r.lead || "", r.pm || ""].map(csvCell).join(",")); });
   return lines.join("\n");
+}
+
+/* ---------- build-plan (deliverable scheduling) ---------- */
+const DEFAULT_WEEKLY_CAP = 3;
+const WEEKS_PER_Q = 13;
+function parseStart(s) {
+  const m = (s || "").match(/Q\s*([1-4])\D+(\d{4})\D+W\s*(\d+)/i);
+  if (!m) return null;
+  const q = +m[1], year = +m[2], wk = Math.max(1, +m[3]);
+  return ((year - 2025) * 4 + (q - 1)) * WEEKS_PER_Q + (wk - 1);
+}
+function weekLabel(idx) {
+  const qOrd = Math.floor(idx / WEEKS_PER_Q), wk = (idx % WEEKS_PER_Q) + 1;
+  const q = (qOrd % 4) + 1, year = 2025 + Math.floor(qOrd / 4);
+  return { q: `Q${q} ${year}`, wk };
+}
+function buildPlanToCsv(projects, org) {
+  const cols = ["projectCode", "deliverable", "stretch", "workstream", "quarter", "projectEffort", "candidateOwners", "dependsOn", "owner", "start", "weeks", "effort"];
+  const byId = Object.fromEntries(projects.map((p) => [p.id, p]));
+  const lines = [cols.join(",")];
+  projects.forEach((p) => {
+    const cands = Array.from(new Set((p.roles || []).map((r) => { const res = resolveResource(org, r.who); return (res && res.lead) || r.who; }).filter(Boolean)));
+    const deps = (p.dependsOn || []).map((d) => (byId[d.id] ? byId[d.id].code : d.id)).join(" | ");
+    (p.deliverables || []).forEach((d) => {
+      lines.push([p.code, d.text, d.stretch ? "yes" : "", p.workstream, p.targetWindow || "TBD", p.effort || "M", cands.join(" | "), deps, "", "", "", ""].map(csvCell).join(","));
+    });
+  });
+  return lines.join("\n");
+}
+function csvToSchedule(text, projects) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) return { byProjectId: {}, count: 0, error: "Need a header row and at least one task row." };
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const at = (r, name) => { const j = header.indexOf(name.toLowerCase()); return j >= 0 ? (r[j] || "").trim() : ""; };
+  if (!header.includes("projectcode") || !header.includes("deliverable")) return { byProjectId: {}, count: 0, error: 'CSV needs at least "projectCode" and "deliverable" columns.' };
+  const codeToId = {}; projects.forEach((p) => { codeToId[(p.code || "").toLowerCase()] = p.id; codeToId[(p.id || "").toLowerCase()] = p.id; });
+  const byProjectId = {}; let count = 0;
+  for (let k = 1; k < rows.length; k++) {
+    const r = rows[k];
+    const code = at(r, "projectcode"); const owner = at(r, "owner"); const start = at(r, "start"); const weeks = at(r, "weeks");
+    if (!code || !owner || !start || !weeks) continue; // only scheduled rows
+    const id = codeToId[code.toLowerCase()]; if (!id) continue;
+    const eff = (at(r, "effort") || "M").toUpperCase();
+    (byProjectId[id] = byProjectId[id] || []).push({ deliverable: at(r, "deliverable"), owner, start, weeks: Math.max(1, Number(weeks) || 1), effort: EFFORTS.includes(eff) ? eff : "M" });
+    count++;
+  }
+  return { byProjectId, count, error: count ? "" : "No fully-scheduled rows found (need owner, start, and weeks filled in)." };
+}
+
+/* ---------- SCHEDULE (deliverables × people × weeks) ---------- */
+function Schedule({ projects, org, weeklyCap, unlocked, onSetWeekly, onImport, onOpen }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const exportPlan = () => {
+    const blob = new Blob([buildPlanToCsv(projects, org)], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "revops-build-plan.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const onFile = (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const rd = new FileReader();
+    rd.onload = async () => { try { setBusy(true); setMsg(""); const n = await onImport(String(rd.result || "")); setMsg(`Imported ${n} scheduled task${n === 1 ? "" : "s"}.`); } catch (err) { setMsg(err.message); } finally { setBusy(false); } };
+    rd.readAsText(f); e.target.value = "";
+  };
+
+  const tasks = [];
+  projects.forEach((p) => {
+    const ws = wsMeta(p.workstream);
+    (p.schedule || []).forEach((t, i) => {
+      const idx = parseStart(t.start); if (idx == null) return;
+      const weeks = Math.max(1, Number(t.weeks) || 1);
+      const pts = EFFORT_POINTS[t.effort] || EFFORT_POINTS.M;
+      tasks.push({ key: p.id + "-" + i, projectId: p.id, code: p.code, ws, deliverable: t.deliverable, owner: t.owner || "Unassigned", idx, weeks, end: idx + weeks - 1, perWeek: pts / weeks });
+    });
+  });
+
+  const controls = (
+    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <button onClick={exportPlan} disabled={!projects.length} style={btnGhost}>↓ Export build plan</button>
+      {unlocked && <label style={{ ...btnGhost, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>↑ Import schedule<input type="file" accept=".csv,text/csv" onChange={onFile} style={{ display: "none" }} /></label>}
+      {busy && <span style={{ fontSize: 12, color: T.inkSoft }}>Importing…</span>}
+      {msg && <span style={{ fontSize: 12, color: msg.startsWith("Imported") ? "#0E8A74" : "#A33D3D" }}>{msg}</span>}
+    </div>
+  );
+
+  if (!tasks.length) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div><h2 style={{ ...h2Style, marginBottom: 2 }}>Build schedule</h2><p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>Deliverables mapped to people and weeks. Capacity is an overlay — the plan prioritizes delivery and flags where people are bottlenecked.</p></div>
+        {controls}
+        <div style={{ background: T.paper, border: `1px dashed ${T.hairline}`, borderRadius: 12, padding: "26px 22px", color: T.inkSoft, fontSize: 13, lineHeight: 1.6, maxWidth: 760 }}>
+          <strong style={{ color: T.ink }}>No schedule yet.</strong> Workflow:
+          <ol style={{ margin: "8px 0 0", paddingLeft: 20 }}>
+            <li><strong>Export build plan</strong> — one row per deliverable with its candidate owners (leads of assigned teams), target quarter, project effort, and dependencies; <code style={codeChip}>owner / start / weeks / effort</code> blank.</li>
+            <li>Sequence it offline (with Claude) — fill <code style={codeChip}>owner</code>, <code style={codeChip}>start</code> (e.g. <code style={codeChip}>Q3 2026 W2</code>), <code style={codeChip}>weeks</code>, <code style={codeChip}>effort</code>; duplicate a row if a deliverable needs more than one person.</li>
+            <li><strong>Import schedule</strong> (unlock first) — this view renders the per-person week Gantt and lights up capacity bottlenecks.</li>
+          </ol>
+        </div>
+      </div>
+    );
+  }
+
+  const minIdx = Math.min(...tasks.map((t) => t.idx)), maxIdx = Math.max(...tasks.map((t) => t.end));
+  const nWeeks = maxIdx - minIdx + 1;
+  const weeks = Array.from({ length: nWeeks }, (_, i) => minIdx + i);
+  const groupIndex = Object.fromEntries((org || []).map((g, i) => [g.name, i]));
+  const people = Array.from(new Set(tasks.map((t) => t.owner)));
+  const rows = people.map((person) => {
+    const res = resolveResource(org, person);
+    const group = res ? res.group : "Unassigned";
+    const ts = tasks.filter((t) => t.owner === person).sort((a, b) => a.idx - b.idx);
+    const lanes = [];
+    ts.forEach((t) => { let placed = false; for (const lane of lanes) { if (lane[lane.length - 1].end < t.idx) { lane.push(t); placed = true; break; } } if (!placed) lanes.push([t]); });
+    const cap = weeklyCap[person] ?? DEFAULT_WEEKLY_CAP;
+    const load = weeks.map((w) => ts.filter((t) => w >= t.idx && w <= t.end).reduce((s, t) => s + t.perWeek, 0));
+    const overload = load.reduce((s, l) => s + Math.max(0, l - cap), 0);
+    const peak = Math.max(0, ...load);
+    return { person, group, ts, lanes, cap, load, overload, peak };
+  }).sort((a, b) => (groupIndex[a.group] ?? 99) - (groupIndex[b.group] ?? 99) || a.person.localeCompare(b.person));
+  const bottlenecks = rows.filter((r) => r.overload > 0).sort((a, b) => b.overload - a.overload);
+
+  const COL = 34, LABEL = 210;
+  const grid = { display: "grid", gridTemplateColumns: `${LABEL}px repeat(${nWeeks}, ${COL}px)` };
+  const qSpans = [];
+  weeks.forEach((w, i) => { const q = weekLabel(w).q; const last = qSpans[qSpans.length - 1]; if (last && last.q === q) last.len++; else qSpans.push({ q, start: i, len: 1 }); });
+  const heatColor = (l, cap) => l === 0 ? "transparent" : (l / cap <= 1 ? "#E4F3EF" : l / cap <= 1.5 ? "#FBF0DD" : "#FBE0DE");
+
+  let lastGroup = null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
+        <div><h2 style={{ ...h2Style, marginBottom: 2 }}>Build schedule</h2><p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>Each bar is a deliverable on a person, across weeks. Heat = weekly load vs capacity (delivery comes first; red = bottleneck to resolve).</p></div>
+        {controls}
+      </div>
+
+      {bottlenecks.length > 0 && (
+        <div style={{ background: "#FBE0DE", border: "1px solid #E7B7B3", borderRadius: 12, padding: "12px 16px" }}>
+          <SectionTitle>Bottlenecks — most over-capacity</SectionTitle>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+            {bottlenecks.slice(0, 8).map((r) => (
+              <span key={r.person} style={{ fontSize: 12, background: "#fff", border: "1px solid #E7B7B3", borderRadius: 999, padding: "3px 10px", color: "#A33D3D", fontWeight: 600 }}>
+                {r.person} · peak {r.peak.toFixed(1)}/{r.cap}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12, overflowX: "auto" }}>
+        <div style={{ minWidth: LABEL + nWeeks * COL }}>
+          <div style={{ ...grid }}>
+            <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1 }} />
+            {qSpans.map((s) => <div key={s.q} style={{ gridColumn: `${2 + s.start} / span ${s.len}`, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.06em", color: T.inkSoft, borderLeft: `1px solid ${T.hairline}`, padding: "2px 0 2px 6px" }}>{s.q.toUpperCase()}</div>)}
+          </div>
+          <div style={{ ...grid, borderBottom: `1px solid ${T.hairline}` }}>
+            <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, fontFamily: T.mono, fontSize: 10, color: T.inkSoft, padding: "2px 8px" }}>TEAM MEMBER</div>
+            {weeks.map((w, i) => <div key={i} style={{ textAlign: "center", fontFamily: T.mono, fontSize: 9.5, color: T.inkSoft, borderLeft: weekLabel(w).wk === 1 ? `1px solid ${T.hairline}` : "none" }}>{weekLabel(w).wk}</div>)}
+          </div>
+
+          {rows.map((r) => {
+            const showGroup = r.group !== lastGroup; lastGroup = r.group;
+            return (
+              <div key={r.person}>
+                {showGroup && <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", color: T.inkSoft, padding: "10px 8px 3px", textTransform: "uppercase" }}>{r.group}</div>}
+                {/* heat row + label */}
+                <div style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairlineSoft}` }}>
+                  <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, padding: "5px 8px", fontSize: 12.5 }}>
+                    <span style={{ fontWeight: 600 }}>{r.person}</span>
+                    <span style={{ marginLeft: 6, fontSize: 10.5, color: T.inkSoft }}>cap </span>
+                    {unlocked
+                      ? <input type="number" min="1" value={r.cap} onChange={(e) => onSetWeekly(r.person, Math.max(1, Number(e.target.value) || 1))} style={{ width: 38, fontFamily: T.mono, fontSize: 11, padding: "1px 3px", border: `1px solid ${T.hairline}`, borderRadius: 5, textAlign: "center" }} />
+                      : <span style={{ fontFamily: T.mono, fontSize: 11, color: T.inkSoft }}>{r.cap}/wk</span>}
+                  </div>
+                  {r.load.map((l, i) => <div key={i} title={`${weekLabel(weeks[i]).q} W${weekLabel(weeks[i]).wk}: ${l.toFixed(1)}/${r.cap}`} style={{ height: 16, background: heatColor(l, r.cap), borderLeft: weekLabel(weeks[i]).wk === 1 ? `1px solid ${T.hairlineSoft}` : "none", textAlign: "center", fontSize: 9, color: "#A33D3D" }}>{l > r.cap ? "•" : ""}</div>)}
+                </div>
+                {/* lane rows with task bars */}
+                {r.lanes.map((lane, li) => (
+                  <div key={li} style={{ ...grid, marginTop: 3 }}>
+                    <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1 }} />
+                    {lane.map((t) => (
+                      <button key={t.key} onClick={() => onOpen(t.projectId)} title={`${t.code} · ${t.deliverable}`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, background: t.ws.soft, borderLeft: `3px solid ${t.ws.color}`, borderRadius: 5, padding: "3px 6px", fontFamily: T.body, fontSize: 11, color: T.ink, textAlign: "left", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+                        <span style={{ fontFamily: T.mono, fontWeight: 700, color: t.ws.color }}>{t.code}</span> {t.deliverable}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{ fontSize: 11.5, color: T.inkSoft, display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#E4F3EF", borderRadius: 2, marginRight: 4 }} />within capacity</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#FBF0DD", borderRadius: 2, marginRight: 4 }} />stretched (≤1.5×)</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#FBE0DE", borderRadius: 2, marginRight: 4 }} />over capacity</span>
+      </div>
+    </div>
+  );
 }
 
 /* ---------- ADD MODAL ---------- */

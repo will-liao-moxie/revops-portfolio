@@ -157,3 +157,23 @@ title,workstream,effort,impact,target,dri,stakeholder,problem,solution,success,d
 - **Every project must name its building teams from the roster** — an empty or non-roster `team`
   list means the project won't show up in Resourcing. Flag missing teams; don't invent names.
 - Emit the CSV in a single fenced code block with nothing after it, so it's copy-paste clean.
+
+---
+
+## Scheduling (build plan) — optional second pass
+
+After projects are on the board, the **Schedule** tab exports a **build plan** CSV (one row per
+deliverable) for sequencing deliverables into weeks. Columns:
+`projectCode, deliverable, stretch, workstream, quarter, projectEffort, candidateOwners, dependsOn, owner, start, weeks, effort`.
+
+Pre-filled: everything except `owner / start / weeks / effort` (those are the scheduling decisions).
+To sequence:
+- `owner` — pick one person from `candidateOwners` (leads of the project's assigned teams). One row = one person; **duplicate the row** if a deliverable needs more than one person.
+- `start` — `Q# YYYY W#` (e.g. `Q3 2026 W2`); a quarter = 13 weeks.
+- `weeks` — duration in weeks.
+- `effort` — XS–XL for that person's slice of the deliverable.
+
+Sequencing rules: respect `dependsOn` (a dependent's deliverables start after its prerequisite's),
+keep work inside the project's `quarter` window, and **prioritize delivery** — let per-person weekly
+load exceed capacity where needed and surface those as bottlenecks rather than delaying delivery.
+The app re-imports the filled CSV and renders a per-person week Gantt with capacity heat.
