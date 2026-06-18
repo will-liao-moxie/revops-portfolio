@@ -64,7 +64,7 @@ const EFFORTS = ["XS", "S", "M", "L", "XL"];
 const EFFORT_POINTS = { XS: 1, S: 2, M: 3, L: 4, XL: 5 };
 const EFFORT_LABEL = { XS: "Extra-small", S: "Small", M: "Medium", L: "Large", XL: "Extra-large" };
 const DEFAULT_CAP = 6;
-const TARGETS = ["TBD", "Q3 2026", "Q4 2026", "Q1 2027", "Q2 2027", "H2 2026", "2027"];
+const TARGETS = ["TBD", "Q3 2026", "Q4 2026", "Q1 2027", "Q2 2027", "Q3 2027", "Q4 2027"];
 function targetRank(t) {
   if (!t || t.toUpperCase() === "TBD") return 999999;
   let m = t.match(/Q([1-4])\s*(\d{4})/i); if (m) return (+m[2]) * 10 + (+m[1]);
