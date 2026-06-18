@@ -524,16 +524,17 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
     URL.revokeObjectURL(url);
   };
   const quarters = useMemo(() => Array.from(new Set(projects.map((p) => p.targetWindow || "TBD"))).sort((a, b) => targetRank(a) - targetRank(b)), [projects]);
+  const categories = useMemo(() => Array.from(new Set(projects.map((p) => p.workstream || "Other"))), [projects]);
   const resources = useMemo(() => allResources(org), [org]);
   const byGroup = {};
   (org || []).forEach((g) => { byGroup[g.name] = []; });
   resources.forEach((r) => {
     const ps = resourceProjects(r, projects);
-    const unitsBy = {}, unitsByQ = {};
-    ps.forEach((p) => { const u = resourceUnitsOn(r, p); unitsBy[p.id] = u; const q = p.targetWindow || "TBD"; unitsByQ[q] = (unitsByQ[q] || 0) + u; });
+    const unitsBy = {}, unitsByQ = {}, unitsByCat = {};
+    ps.forEach((p) => { const u = resourceUnitsOn(r, p); unitsBy[p.id] = u; const q = p.targetWindow || "TBD"; unitsByQ[q] = (unitsByQ[q] || 0) + u; const c = p.workstream || "Other"; unitsByCat[c] = (unitsByCat[c] || 0) + u; });
     const units = ps.reduce((s, p) => s + unitsBy[p.id], 0);
     const peak = Math.max(0, ...Object.values(unitsByQ));
-    (byGroup[r.group] = byGroup[r.group] || []).push({ ...r, unitsBy, unitsByQ, units, peak });
+    (byGroup[r.group] = byGroup[r.group] || []).push({ ...r, unitsBy, unitsByQ, unitsByCat, units, peak });
   });
   const tab = (k, label) => <button onClick={() => setMode(k)} style={{ fontFamily: T.body, fontSize: 12, fontWeight: mode === k ? 600 : 500, padding: "5px 11px", borderRadius: 999, border: `1px solid ${mode === k ? T.ink : T.hairline}`, background: mode === k ? T.ink : T.surface, color: mode === k ? "#fff" : T.inkSoft }}>{label}</button>;
 
@@ -542,7 +543,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
         <div>
           <h2 style={{ ...h2Style, marginBottom: 2 }}>Resourcing & allocation</h2>
-          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>{mode === "project" ? "Team roster × projects — each cell is that project's work units. Team and totals stay pinned; project columns scroll." : "Team roster × quarter — each cell sums a team's work units for that quarter (scales to many projects). Capacity is per-quarter; cells over it are flagged."}</p>
+          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>{mode === "project" ? "Team roster × projects — each cell is that project's work units. Team and totals stay pinned; project columns scroll." : mode === "category" ? "Team roster × category — each cell sums a team's work units for that workstream, so you can see who carries each category." : "Team roster × quarter — each cell sums a team's work units for that quarter (scales to many projects). Capacity is per-quarter; cells over it are flagged."}</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.mono, fontSize: 11.5, color: T.inkSoft }}>
           <button onClick={exportRoster} title="Download the team roster as CSV" style={btnGhost}>↓ Export roster</button>
@@ -554,7 +555,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
 
       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
         <span style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: T.inkSoft, marginRight: 2 }}>VIEW</span>
-        {tab("quarter", "By quarter")}{tab("project", "By project")}
+        {tab("quarter", "By quarter")}{tab("category", "By category")}{tab("project", "By project")}
       </div>
 
       {managing && unlocked && <OrgEditor org={org} onSave={onSaveOrg} />}
@@ -564,15 +565,17 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
           <thead>
             <tr>
               <th style={{ ...thStyle, ...FROZEN.team, zIndex: 3, textAlign: "left", minWidth: TEAM_W, width: TEAM_W }}>Team / resource</th>
-              <th style={{ ...thStyle, ...FROZEN.alloc, zIndex: 3, width: ALLOC_W }} title={mode === "project" ? "Total allocated work units" : "Peak quarter load"}>{mode === "project" ? "Alloc" : "Peak"}</th>
+              <th style={{ ...thStyle, ...FROZEN.alloc, zIndex: 3, width: ALLOC_W }} title={mode === "quarter" ? "Peak quarter load" : "Total allocated work units"}>{mode === "quarter" ? "Peak" : "Alloc"}</th>
               <th style={{ ...thStyle, ...FROZEN.cap, zIndex: 3, width: CAP_W }}>Cap</th>
               {mode === "project"
                 ? projects.map((p) => { const ws = wsMeta(p.workstream); return <th key={p.id} style={thStyle}><button onClick={() => onOpen(p.id)} title={p.title} style={{ background: "none", border: "none", color: ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em" }}>{p.code}</button></th>; })
-                : quarters.map((q) => <th key={q} style={thStyle}>{q}</th>)}
+                : mode === "category"
+                  ? categories.map((c) => { const ws = wsMeta(c); return <th key={c} title={c} style={{ ...thStyle, color: ws.color, minWidth: 64 }}>{ws.code}</th>; })
+                  : quarters.map((q) => <th key={q} style={thStyle}>{q}</th>)}
             </tr>
           </thead>
           <tbody>
-            {(org || []).map((g) => <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name] || []} mode={mode} projects={projects} quarters={quarters} capacities={capacities} unlocked={unlocked} onSetCapacity={onSetCapacity} />)}
+            {(org || []).map((g) => <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name] || []} mode={mode} projects={projects} quarters={quarters} categories={categories} capacities={capacities} unlocked={unlocked} onSetCapacity={onSetCapacity} />)}
           </tbody>
         </table>
       </div>
@@ -580,8 +583,8 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
   );
 }
 
-function ResourceGroup({ group, rows, mode, projects, quarters, capacities, unlocked, onSetCapacity }) {
-  const ncols = (mode === "project" ? projects.length : quarters.length) + 3;
+function ResourceGroup({ group, rows, mode, projects, quarters, categories, capacities, unlocked, onSetCapacity }) {
+  const ncols = (mode === "project" ? projects.length : mode === "category" ? categories.length : quarters.length) + 3;
   return (
     <>
       <tr><td colSpan={ncols} style={{ ...FROZEN.team, padding: "10px 14px 4px", background: T.paper, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{group}</td></tr>
@@ -594,7 +597,9 @@ function ResourceGroup({ group, rows, mode, projects, quarters, capacities, unlo
             <td style={{ ...FROZEN.cap, background: T.surface, textAlign: "center" }}>{unlocked ? <input type="number" min="1" value={cap} onChange={(e) => onSetCapacity(r.label, Math.max(1, Number(e.target.value) || 1))} style={{ width: 44, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "2px 4px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}</td>
             {mode === "project"
               ? projects.map((p) => { const ws = wsMeta(p.workstream); const v = r.unitsBy[p.id]; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px" }}>{v != null ? <span title={`${p.code} · ${v} units`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, background: ws.soft, color: ws.color, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 }}>{v}</span> : null}</td>; })
-              : quarters.map((q) => { const v = r.unitsByQ[q] || 0; const oc = v > cap; return <td key={q} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={`${q} · ${v}/${cap}`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, background: oc ? "#FBEAEA" : T.hairlineSoft, color: oc ? "#C0463E" : T.ink, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 }}>{v}{oc ? " ⚠" : ""}</span> : null}</td>; })}
+              : mode === "category"
+                ? categories.map((c) => { const ws = wsMeta(c); const v = r.unitsByCat[c] || 0; return <td key={c} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={`${c} · ${v} units`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, background: ws.soft, color: ws.color, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 }}>{v}</span> : null}</td>; })
+                : quarters.map((q) => { const v = r.unitsByQ[q] || 0; const oc = v > cap; return <td key={q} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={`${q} · ${v}/${cap}`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, background: oc ? "#FBEAEA" : T.hairlineSoft, color: oc ? "#C0463E" : T.ink, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 }}>{v}{oc ? " ⚠" : ""}</span> : null}</td>; })}
           </tr>
         );
       })}
