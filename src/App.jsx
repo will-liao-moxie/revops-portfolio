@@ -1160,7 +1160,7 @@ function projectTasks(p) {
   return (p.schedule || []).map((t, i) => {
     const idx = parseStart(t.start); if (idx == null) return null;
     return { key: p.id + "-" + i, projectId: p.id, code: p.code, deliverable: t.deliverable, owner: t.owner || "", effort: t.effort || "M", stretch: stretchSet.has(normDel(t.deliverable)), ws, idx, weeks: Math.max(1, Number(t.weeks) || 1) };
-  }).filter(Boolean);
+  }).filter(Boolean).sort((a, b) => a.idx - b.idx || b.weeks - a.weeks);
 }
 /* lenient per-project task CSV: deliverable, owner, start, weeks (projectCode optional/ignored) */
 function parseTasksCsv(text) {
