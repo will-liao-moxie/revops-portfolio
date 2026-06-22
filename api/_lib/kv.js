@@ -1,16 +1,19 @@
 import { put, list } from "@vercel/blob";
 
-/* Each save writes a NEW uniquely-named blob (unique URL = never CDN-cached = always
-   fresh on read). Reads pick the newest version by the ms timestamp in the pathname.
-   We APPEND ONLY — never delete — so a stale/empty write can never wipe history.
+/* Combined state lives in ONE append-only versioned store: state-v/<ms>.json holds
+   { projects, settings }. Reads do a single list() (Advanced op) instead of one per
+   collection — halving advanced-operation usage on the hot read path. We APPEND ONLY,
+   never delete, so a stale/empty write can never wipe history.
    (A fixed filename can't be used: Vercel's CDN serves stale copies of a fixed URL.) */
-const PROJECTS_PREFIX = "projects-v/";
-const SETTINGS_PREFIX = "settings-v/";
-const LEGACY = { [PROJECTS_PREFIX]: "projects.json", [SETTINGS_PREFIX]: "settings.json" };
+const STATE_PREFIX = "state-v/";
+/* legacy split stores — migrated-on-read the first time, then state-v/ is the source of truth */
+const OLD_PROJECTS = "projects-v/";
+const OLD_SETTINGS = "settings-v/";
+const LEGACY = { [OLD_PROJECTS]: "projects.json", [OLD_SETTINGS]: "settings.json" };
 const token = () => process.env.BLOB_READ_WRITE_TOKEN;
 function ver(b) { const m = (b.pathname || "").match(/(\d{10,})/); return m ? Number(m[1]) : new Date(b.uploadedAt).getTime(); }
 
-async function readLatest(prefix, fallback) {
+async function readPrefix(prefix, fallback) {
   const { blobs } = await list({ prefix, token: token() });
   if (blobs.length) {
     blobs.sort((a, b) => ver(b) - ver(a));
@@ -27,16 +30,41 @@ async function readLatest(prefix, fallback) {
   return fallback;
 }
 
-async function writeLatest(prefix, data) {
-  await put(`${prefix}${Date.now()}.json`, JSON.stringify(data), {
+async function writeState(state) {
+  await put(`${STATE_PREFIX}${Date.now()}.json`, JSON.stringify(state), {
     access: "public", contentType: "application/json", token: token(), addRandomSuffix: true,
   });
 }
 
-export async function getProjects() { try { return await readLatest(PROJECTS_PREFIX, []); } catch { return []; } }
-export async function saveProjects(projects) { await writeLatest(PROJECTS_PREFIX, projects); }
-export async function getSettings() { try { return await readLatest(SETTINGS_PREFIX, {}); } catch { return {}; } }
-export async function saveSettings(obj) { await writeLatest(SETTINGS_PREFIX, obj || {}); }
+/* Read the combined {projects, settings}. One list() in the steady state. The first time
+   (no state-v/ yet) it migrates the old split stores and persists them, so later reads are
+   single-list again. */
+export async function getState() {
+  try {
+    const { blobs } = await list({ prefix: STATE_PREFIX, token: token() });
+    if (blobs.length) {
+      blobs.sort((a, b) => ver(b) - ver(a));
+      const res = await fetch(blobs[0].url, { cache: "no-store" });
+      const s = await res.json();
+      return { projects: s.projects || [], settings: s.settings || {} };
+    }
+    const projects = (await readPrefix(OLD_PROJECTS, [])) || [];
+    const settings = (await readPrefix(OLD_SETTINGS, {})) || {};
+    const migrated = { projects, settings };
+    if (projects.length || Object.keys(settings).length) { try { await writeState(migrated); } catch { /* best-effort */ } }
+    return migrated;
+  } catch { return { projects: [], settings: {} }; }
+}
+
+export async function saveState(state) {
+  await writeState({ projects: state.projects || [], settings: state.settings || {} });
+}
+
+/* compatibility helpers (each still single-list + single-put) */
+export async function getProjects() { return (await getState()).projects; }
+export async function saveProjects(projects) { const s = await getState(); await saveState({ ...s, projects }); }
+export async function getSettings() { return (await getState()).settings; }
+export async function saveSettings(settings) { const s = await getState(); await saveState({ ...s, settings }); }
 
 export function requireEditKey(req, res) {
   const key = process.env.EDIT_KEY;

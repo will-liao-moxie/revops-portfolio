@@ -256,6 +256,10 @@ function WorkstreamSelect({ value, options, onChange, color }) {
 }
 
 /* ---------- main app ---------- */
+const CACHE_KEY = "revops:data:v1";
+const readCache = () => { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "null"); } catch { return null; } };
+const writeCache = (d) => { try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch { /* quota/private mode */ } };
+
 export default function App() {
   const [view, setView] = useState("board");
   const [projects, setProjects] = useState([]);
@@ -269,16 +273,32 @@ export default function App() {
   const [showAdd, setShowAdd] = useState(false);
   const [unlocked, setUnlocked] = useState(() => getEditKey() === EDIT_PW);
 
+  const applyState = (data) => {
+    setProjects(Array.isArray(data.projects) ? data.projects : []);
+    const s = data.settings || {};
+    setCapacities(s.capacities || {});
+    setWeeklyCap(s.weeklyCap || {});
+    setOrg(Array.isArray(s.org) && s.org.length ? s.org : DEFAULT_ORG);
+  };
+  // single combined read (1 list op/load instead of 2); falls back to the local cache on any error
   const refresh = async () => {
     try {
       setLoadError("");
-      const [pr, st] = await Promise.all([fetch("/api/projects", { cache: "no-store" }), fetch("/api/settings", { cache: "no-store" })]);
-      if (!pr.ok) { const e = await pr.json().catch(() => ({})); throw new Error(e.error || `Could not load projects (${pr.status})`); }
-      setProjects(await pr.json());
-      if (st.ok) { const s = await st.json(); setCapacities(s.capacities || {}); setWeeklyCap(s.weeklyCap || {}); setOrg(Array.isArray(s.org) && s.org.length ? s.org : DEFAULT_ORG); }
-    } catch (e) { setLoadError(e.message); } finally { setLoaded(true); }
+      const res = await fetch("/api/data", { cache: "no-store" });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Could not load data (${res.status})`); }
+      applyState(await res.json());
+    } catch (e) {
+      const cached = readCache();
+      if (cached) { applyState(cached); setLoadError(""); } else setLoadError(e.message);
+    } finally { setLoaded(true); }
   };
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    const cached = readCache();
+    if (cached) { applyState(cached); setLoaded(true); } // instant paint from cache, then revalidate
+    refresh();
+  }, []);
+  // keep the local cache in sync so reloads paint instantly and survive a transient API/quota hiccup
+  useEffect(() => { if (loaded) writeCache({ projects, settings: { capacities, weeklyCap, org } }); }, [loaded, projects, capacities, weeklyCap, org]);
 
   const toggleLock = () => {
     if (unlocked) { clearEditKey(); setUnlocked(false); return; }
