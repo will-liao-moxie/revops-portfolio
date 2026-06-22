@@ -1243,15 +1243,17 @@ function GanttGrid({ groups, org, onOpen, labelHeader = "Deliverable" }) {
   const qSpans = [];
   weeks.forEach((w, i) => { const q = weekLabel(w).q; const last = qSpans[qSpans.length - 1]; if (last && last.q === q) last.len++; else qSpans.push({ q, start: i, len: 1 }); });
   return (
-    <div style={{ overflowX: "auto" }}>
+    <div style={{ overflow: "auto", maxHeight: 440 }}>
       <div style={{ minWidth: LABEL + nWeeks * MINCOL }}>
+        <div style={{ position: "sticky", top: 0, zIndex: 4, background: T.surface }}>
         <div style={grid}>
-          <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1 }} />
+          <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 2 }} />
           {qSpans.map((s) => <div key={s.q} style={{ gridColumn: `${2 + s.start} / span ${s.len}`, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.06em", color: T.inkSoft, borderLeft: `1px solid ${T.hairline}`, padding: "2px 0 2px 6px" }}>{s.q.toUpperCase()}</div>)}
         </div>
         <div style={{ ...grid, borderBottom: `1px solid ${T.hairline}` }}>
-          <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, fontFamily: T.mono, fontSize: 10, color: T.inkSoft, padding: "2px 8px" }}>{labelHeader.toUpperCase()}</div>
+          <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 2, fontFamily: T.mono, fontSize: 10, color: T.inkSoft, padding: "2px 8px" }}>{labelHeader.toUpperCase()}</div>
           {weeks.map((w, i) => <div key={i} style={{ textAlign: "center", padding: "2px 0", borderLeft: weekLabel(w).wk === 1 ? `1px solid ${T.hairline}` : "none" }}><div style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 600, color: T.ink }}>W{weekLabel(w).wk}</div><div style={{ fontFamily: T.mono, fontSize: 8.5, color: T.inkSoft }}>{weekDate(w)}</div></div>)}
+        </div>
         </div>
         {groups.map((g) => (
           <div key={g.key}>
@@ -1339,15 +1341,17 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
       </div>
       {groups.length > 0 && <GanttLegend />}
       {groups.length ? (
-        <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12, overflowX: "auto" }}>
+        <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12, overflow: "auto", maxHeight: "72vh" }}>
           <div style={{ minWidth: LABEL + nWeeks * COL }}>
+            <div style={{ position: "sticky", top: 0, zIndex: 4, background: T.surface }}>
             <div style={grid}>
-              <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1 }} />
+              <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 2 }} />
               {qSpans.map((s) => <div key={s.q} style={{ gridColumn: `${2 + s.start} / span ${s.len}`, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.06em", color: T.inkSoft, borderLeft: `1px solid ${T.hairline}`, padding: "2px 0 2px 6px" }}>{s.q.toUpperCase()}</div>)}
             </div>
             <div style={{ ...grid, borderBottom: `1px solid ${T.hairline}` }}>
-              <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, fontFamily: T.mono, fontSize: 10, color: T.inkSoft, padding: "2px 8px" }}>PROJECT</div>
+              <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 2, fontFamily: T.mono, fontSize: 10, color: T.inkSoft, padding: "2px 8px" }}>PROJECT</div>
               {weeks.map((w, i) => <div key={i} style={{ textAlign: "center", padding: "2px 0", borderLeft: weekLabel(w).wk === 1 ? `1px solid ${T.hairline}` : "none" }}><div style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 600, color: T.ink }}>W{weekLabel(w).wk}</div><div style={{ fontFamily: T.mono, fontSize: 8.5, color: T.inkSoft }}>{weekDate(w)}</div></div>)}
+            </div>
             </div>
             {groups.map((g) => {
               const isOpen = !!expanded[g.p.id];
