@@ -177,3 +177,38 @@ Sequencing rules: respect `dependsOn` (a dependent's deliverables start after it
 keep work inside the project's `quarter` window, and **prioritize delivery** — let per-person weekly
 load exceed capacity where needed and surface those as bottlenecks rather than delaying delivery.
 The app re-imports the filled CSV and renders a per-person week Gantt with capacity heat.
+
+---
+
+## Project Gantt payload (per-project timeline)
+
+Each project doc has a **Timeline** that renders its deliverables as a weekly Gantt (one bar per
+row, owner as the subtitle), and they roll up into the app's **Master Gantt**. To populate a
+project's timeline, generate a CSV and the user imports it from that project's doc (**Import
+timeline CSV**).
+
+**Columns:** `deliverable, owner, start, weeks`
+- `deliverable` — the bar label (the thing being built). One row per bar; duplicate the
+  deliverable across rows if distinct chunks run at different times.
+- `owner` — short label shown under the deliverable. Use a roster team/person; combine up to two
+  with ` · ` (e.g. `Business Systems · HubSpot`).
+- `start` — `Q# YYYY W#`, where W1–W13 are the weeks within that quarter (e.g. `Q3 2026 W2`).
+- `weeks` — duration in weeks (integer ≥ 1).
+
+Rules:
+- Keep every deliverable inside the project's `target` quarter window unless it legitimately spans.
+- Order/space deliverables so prerequisites finish before dependents start.
+- A `projectCode` column is allowed but ignored on per-project import (the file is assumed to be
+  for the open project). For the **Master Gantt** bulk import, include `projectCode` so rows map to
+  the right projects (this is the same as the build-plan export: `owner, start, weeks` filled in).
+
+**Example (one project):**
+```csv
+deliverable,owner,start,weeks
+Create + populate classification field,Business Systems · HubSpot,Q3 2026 W1,1
+Revise WBR + notify Sales,Pre-Sales,Q3 2026 W1,1
+Build Customer Segment + VIP,Business Systems · HubSpot,Q3 2026 W2,1
+Run segment logic,Pre-Sales,Q3 2026 W2,2
+Backfill HubSpot + warehouse,HubSpot · Data,Q3 2026 W5,1
+QA + phased cutover,HubSpot · Business Systems,Q3 2026 W6,1
+```

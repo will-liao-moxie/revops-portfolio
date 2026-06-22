@@ -270,7 +270,7 @@ export default function App() {
   };
 
   const workstreams = ["All", ...Array.from(new Set(projects.map((p) => p.workstream)))];
-  const views = [["board", "Board"], ["matrix", "Priority matrix"], ["sequence", "Sequence"], ["resourcing", "Resourcing"], ["schedule", "Schedule"]];
+  const views = [["board", "Board"], ["matrix", "Priority matrix"], ["sequence", "Sequence"], ["resourcing", "Resourcing"], ["schedule", "Master Gantt"]];
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.ink, fontFamily: T.body }}>
@@ -331,7 +331,7 @@ export default function App() {
             : view === "matrix" ? <Matrix projects={visible} onOpen={setSelectedId} />
               : view === "sequence" ? <Sequence projects={visible} byId={byId} onOpen={setSelectedId} />
                 : view === "resourcing" ? <Resourcing projects={projects} org={org} capacities={capacities} unlocked={unlocked} onSetCapacity={setCapacity} onSaveOrg={saveOrg} onOpen={setSelectedId} />
-                  : <Schedule projects={projects} org={org} weeklyCap={weeklyCap} unlocked={unlocked} onSetWeekly={setWeekly} onImport={importSchedule} onOpen={setSelectedId} />}
+                  : <Schedule projects={projects} org={org} unlocked={unlocked} onImport={importSchedule} onOpen={setSelectedId} />}
       </main>
 
       {selected && <Detail p={selected} byId={byId} org={org} unlocked={unlocked} workstreams={allWorkstreams} onClose={() => setSelectedId(null)} onUpdate={(patch) => updateProject(selected.id, patch)} onRemove={() => removeProject(selected.id)} onOpen={setSelectedId} />}
@@ -670,6 +670,14 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
   const stretch = (p.deliverables || []).filter((d) => d.stretch);
   const depOptions = Object.values(byId).filter((x) => x.id !== p.id);
   const targetOpts = Array.from(new Set([p.targetWindow || "TBD", ...TARGETS]));
+  const [ganttMsg, setGanttMsg] = useState("");
+  const ganttTasks = projectTasks(p);
+  const onGanttFile = (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => { const { tasks, error } = parseTasksCsv(String(rd.result || "")); if (error) { setGanttMsg(error); return; } onUpdate({ schedule: tasks }); setGanttMsg(`Loaded ${tasks.length} deliverable${tasks.length === 1 ? "" : "s"} into the timeline.`); };
+    rd.readAsText(f); e.target.value = "";
+  };
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
@@ -768,7 +776,19 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
           </aside>
         </div>
 
-        {unlocked && <div style={{ padding: "8px 26px 32px" }}><button onClick={onRemove} style={{ fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "9px 14px", borderRadius: 8, background: "none", border: "1px solid #D9A0A0", color: "#A33D3D" }}>Remove project</button></div>}
+        {/* per-project Gantt: deliverables × owners across weeks */}
+        <div style={{ padding: "10px 26px 0" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+            <SectionTitle>Timeline — deliverables × owner</SectionTitle>
+            {unlocked && <label style={{ ...btnGhost, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12 }}>↑ Import timeline CSV<input type="file" accept=".csv,text/csv" onChange={onGanttFile} style={{ display: "none" }} /></label>}
+          </div>
+          {ganttMsg && <div style={{ fontSize: 12, color: ganttMsg.startsWith("Loaded") ? "#0E8A74" : "#A33D3D", marginBottom: 8 }}>{ganttMsg}</div>}
+          {ganttTasks.length
+            ? <div style={{ border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 10 }}><GanttGrid groups={[{ key: p.id, label: "", color: ws.color, tasks: ganttTasks }]} labelHeader="Deliverable" /></div>
+            : <div style={{ background: T.paper, border: `1px dashed ${T.hairline}`, borderRadius: 10, padding: "16px 18px", fontSize: 12.5, color: T.inkSoft, lineHeight: 1.55 }}>No timeline yet. {unlocked ? <>Import a CSV with columns <code style={codeChip}>deliverable, owner, start, weeks</code> — <code style={codeChip}>start</code> like <code style={codeChip}>Q3 2026 W2</code>.</> : "Unlock editing to import a timeline."}</div>}
+        </div>
+
+        {unlocked && <div style={{ padding: "12px 26px 32px" }}><button onClick={onRemove} style={{ fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "9px 14px", borderRadius: 8, background: "none", border: "1px solid #D9A0A0", color: "#A33D3D" }}>Remove project</button></div>}
       </div>
     </div>
   );
@@ -1032,7 +1052,74 @@ function csvToSchedule(text, projects) {
 }
 
 /* ---------- SCHEDULE (deliverables × people × weeks) ---------- */
-function Schedule({ projects, org, weeklyCap, unlocked, onSetWeekly, onImport, onOpen }) {
+/* tasks for a project's Gantt = its scheduled deliverables (start = "Q# YYYY W#", weeks = duration) */
+function projectTasks(p) {
+  const ws = wsMeta(p.workstream);
+  return (p.schedule || []).map((t, i) => {
+    const idx = parseStart(t.start); if (idx == null) return null;
+    return { key: p.id + "-" + i, projectId: p.id, code: p.code, deliverable: t.deliverable, owner: t.owner || "", ws, idx, weeks: Math.max(1, Number(t.weeks) || 1) };
+  }).filter(Boolean);
+}
+/* lenient per-project task CSV: deliverable, owner, start, weeks (projectCode optional/ignored) */
+function parseTasksCsv(text) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) return { tasks: [], error: "Need a header row and at least one task row." };
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const at = (r, n) => { const j = header.indexOf(n); return j >= 0 ? (r[j] || "").trim() : ""; };
+  if (!header.includes("deliverable")) return { tasks: [], error: 'CSV needs a "deliverable" column.' };
+  const tasks = [];
+  for (let k = 1; k < rows.length; k++) {
+    const r = rows[k]; const del = at(r, "deliverable"), owner = at(r, "owner"), start = at(r, "start"), weeks = at(r, "weeks");
+    if (!del || !start || !weeks) continue;
+    if (parseStart(start) == null) continue;
+    tasks.push({ deliverable: del, owner, start, weeks: Math.max(1, Number(weeks) || 1) });
+  }
+  return { tasks, error: tasks.length ? "" : "No valid rows (need deliverable, start like 'Q3 2026 W2', and weeks)." };
+}
+
+/* shared weekly Gantt: groups = [{ key, label, color, tasks:[projectTasks-shape] }] */
+function GanttGrid({ groups, onOpen, labelHeader = "Deliverable" }) {
+  const all = groups.flatMap((g) => g.tasks);
+  if (!all.length) return null;
+  const minIdx = Math.min(...all.map((t) => t.idx)), maxIdx = Math.max(...all.map((t) => t.idx + t.weeks - 1));
+  const nWeeks = maxIdx - minIdx + 1;
+  const weeks = Array.from({ length: nWeeks }, (_, i) => minIdx + i);
+  const COL = 40, LABEL = 250;
+  const grid = { display: "grid", gridTemplateColumns: `${LABEL}px repeat(${nWeeks}, ${COL}px)` };
+  const qSpans = [];
+  weeks.forEach((w, i) => { const q = weekLabel(w).q; const last = qSpans[qSpans.length - 1]; if (last && last.q === q) last.len++; else qSpans.push({ q, start: i, len: 1 }); });
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <div style={{ minWidth: LABEL + nWeeks * COL }}>
+        <div style={grid}>
+          <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1 }} />
+          {qSpans.map((s) => <div key={s.q} style={{ gridColumn: `${2 + s.start} / span ${s.len}`, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.06em", color: T.inkSoft, borderLeft: `1px solid ${T.hairline}`, padding: "2px 0 2px 6px" }}>{s.q.toUpperCase()}</div>)}
+        </div>
+        <div style={{ ...grid, borderBottom: `1px solid ${T.hairline}` }}>
+          <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, fontFamily: T.mono, fontSize: 10, color: T.inkSoft, padding: "2px 8px" }}>{labelHeader.toUpperCase()}</div>
+          {weeks.map((w, i) => <div key={i} style={{ textAlign: "center", fontFamily: T.mono, fontSize: 9.5, color: T.inkSoft, borderLeft: weekLabel(w).wk === 1 ? `1px solid ${T.hairline}` : "none" }}>W{weekLabel(w).wk}</div>)}
+        </div>
+        {groups.map((g) => (
+          <div key={g.key}>
+            {g.label && <div style={{ ...grid }}><div style={{ gridColumn: "1 / -1", position: "sticky", left: 0, background: T.paper, padding: "8px 8px 4px", fontFamily: T.display, fontWeight: 700, fontSize: 13, color: g.color || T.ink, borderTop: `1px solid ${T.hairline}` }}>{g.label}</div></div>}
+            {g.tasks.map((t) => (
+              <div key={t.key} style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairlineSoft}` }}>
+                <button onClick={() => onOpen && onOpen(t.projectId)} style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, textAlign: "left", border: "none", padding: "7px 8px", fontFamily: T.body, cursor: onOpen ? "pointer" : "default", overflow: "hidden" }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: T.ink, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.deliverable}</div>
+                  {t.owner && <div style={{ fontSize: 11, color: t.ws.color, lineHeight: 1.2 }}>{t.owner}</div>}
+                </button>
+                <div title={`${t.deliverable}${t.owner ? " · " + t.owner : ""} · ${weekLabel(t.idx).q} W${weekLabel(t.idx).wk} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 20, background: t.ws.soft, border: `1px solid ${t.ws.color}`, borderLeft: `3px solid ${t.ws.color}`, borderRadius: 5, margin: "5px 2px" }} />
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- MASTER GANTT ---------- */
+function Schedule({ projects, org, unlocked, onImport, onOpen }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const exportPlan = () => {
@@ -1044,141 +1131,40 @@ function Schedule({ projects, org, weeklyCap, unlocked, onSetWeekly, onImport, o
   const onFile = (e) => {
     const f = e.target.files[0]; if (!f) return;
     const rd = new FileReader();
-    rd.onload = async () => { try { setBusy(true); setMsg(""); const n = await onImport(String(rd.result || "")); setMsg(`Imported ${n} scheduled task${n === 1 ? "" : "s"}.`); } catch (err) { setMsg(err.message); } finally { setBusy(false); } };
+    rd.onload = async () => { try { setBusy(true); setMsg(""); const n = await onImport(String(rd.result || "")); setMsg(`Imported ${n} scheduled deliverable${n === 1 ? "" : "s"}.`); } catch (err) { setMsg(err.message); } finally { setBusy(false); } };
     rd.readAsText(f); e.target.value = "";
   };
 
-  const tasks = [];
-  projects.forEach((p) => {
-    const ws = wsMeta(p.workstream);
-    (p.schedule || []).forEach((t, i) => {
-      const idx = parseStart(t.start); if (idx == null) return;
-      const weeks = Math.max(1, Number(t.weeks) || 1);
-      const pts = EFFORT_POINTS[t.effort] || EFFORT_POINTS.M;
-      tasks.push({ key: p.id + "-" + i, projectId: p.id, code: p.code, ws, deliverable: t.deliverable, owner: t.owner || "Unassigned", idx, weeks, end: idx + weeks - 1, perWeek: pts / weeks });
-    });
-  });
+  const groups = projects.map((p) => ({ key: p.id, label: `${p.code} · ${p.title}`, color: wsMeta(p.workstream).color, tasks: projectTasks(p) })).filter((g) => g.tasks.length);
 
   const controls = (
     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <button onClick={exportPlan} disabled={!projects.length} style={btnGhost}>↓ Export build plan</button>
-      {unlocked && <label style={{ ...btnGhost, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>↑ Import schedule<input type="file" accept=".csv,text/csv" onChange={onFile} style={{ display: "none" }} /></label>}
+      {unlocked && <label style={{ ...btnGhost, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>↑ Import (all projects)<input type="file" accept=".csv,text/csv" onChange={onFile} style={{ display: "none" }} /></label>}
       {busy && <span style={{ fontSize: 12, color: T.inkSoft }}>Importing…</span>}
       {msg && <span style={{ fontSize: 12, color: msg.startsWith("Imported") ? "#0E8A74" : "#A33D3D" }}>{msg}</span>}
     </div>
   );
 
-  if (!tasks.length) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div><h2 style={{ ...h2Style, marginBottom: 2 }}>Build schedule</h2><p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>Deliverables mapped to people and weeks. Capacity is an overlay — the plan prioritizes delivery and flags where people are bottlenecked.</p></div>
-        {controls}
-        <div style={{ background: T.paper, border: `1px dashed ${T.hairline}`, borderRadius: 12, padding: "26px 22px", color: T.inkSoft, fontSize: 13, lineHeight: 1.6, maxWidth: 760 }}>
-          <strong style={{ color: T.ink }}>No schedule yet.</strong> Workflow:
-          <ol style={{ margin: "8px 0 0", paddingLeft: 20 }}>
-            <li><strong>Export build plan</strong> — one row per deliverable with its candidate owners (leads of assigned teams), target quarter, project effort, and dependencies; <code style={codeChip}>owner / start / weeks / effort</code> blank.</li>
-            <li>Sequence it offline (with Claude) — fill <code style={codeChip}>owner</code>, <code style={codeChip}>start</code> (e.g. <code style={codeChip}>Q3 2026 W2</code>), <code style={codeChip}>weeks</code>, <code style={codeChip}>effort</code>; duplicate a row if a deliverable needs more than one person.</li>
-            <li><strong>Import schedule</strong> (unlock first) — this view renders the per-person week Gantt and lights up capacity bottlenecks.</li>
-          </ol>
-        </div>
-      </div>
-    );
-  }
-
-  const minIdx = Math.min(...tasks.map((t) => t.idx)), maxIdx = Math.max(...tasks.map((t) => t.end));
-  const nWeeks = maxIdx - minIdx + 1;
-  const weeks = Array.from({ length: nWeeks }, (_, i) => minIdx + i);
-  const groupIndex = Object.fromEntries((org || []).map((g, i) => [g.name, i]));
-  const people = Array.from(new Set(tasks.map((t) => t.owner)));
-  const rows = people.map((person) => {
-    const res = resolveResource(org, person);
-    const group = res ? res.group : "Unassigned";
-    const ts = tasks.filter((t) => t.owner === person).sort((a, b) => a.idx - b.idx);
-    const lanes = [];
-    ts.forEach((t) => { let placed = false; for (const lane of lanes) { if (lane[lane.length - 1].end < t.idx) { lane.push(t); placed = true; break; } } if (!placed) lanes.push([t]); });
-    const cap = weeklyCap[person] ?? DEFAULT_WEEKLY_CAP;
-    const load = weeks.map((w) => ts.filter((t) => w >= t.idx && w <= t.end).reduce((s, t) => s + t.perWeek, 0));
-    const overload = load.reduce((s, l) => s + Math.max(0, l - cap), 0);
-    const peak = Math.max(0, ...load);
-    return { person, group, ts, lanes, cap, load, overload, peak };
-  }).sort((a, b) => (groupIndex[a.group] ?? 99) - (groupIndex[b.group] ?? 99) || a.person.localeCompare(b.person));
-  const bottlenecks = rows.filter((r) => r.overload > 0).sort((a, b) => b.overload - a.overload);
-
-  const COL = 34, LABEL = 210;
-  const grid = { display: "grid", gridTemplateColumns: `${LABEL}px repeat(${nWeeks}, ${COL}px)` };
-  const qSpans = [];
-  weeks.forEach((w, i) => { const q = weekLabel(w).q; const last = qSpans[qSpans.length - 1]; if (last && last.q === q) last.len++; else qSpans.push({ q, start: i, len: 1 }); });
-  const heatColor = (l, cap) => l === 0 ? "transparent" : (l / cap <= 1 ? "#E4F3EF" : l / cap <= 1.5 ? "#FBF0DD" : "#FBE0DE");
-
-  let lastGroup = null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
-        <div><h2 style={{ ...h2Style, marginBottom: 2 }}>Build schedule</h2><p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>Each bar is a deliverable on a person, across weeks. Heat = weekly load vs capacity (delivery comes first; red = bottleneck to resolve).</p></div>
+        <div><h2 style={{ ...h2Style, marginBottom: 2 }}>Master Gantt</h2><p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>Every project's deliverables on one timeline, grouped by project and colored by workstream. Each bar is a deliverable; the subtitle is its owner. Click a row to open the project.</p></div>
         {controls}
       </div>
-
-      {bottlenecks.length > 0 && (
-        <div style={{ background: "#FBE0DE", border: "1px solid #E7B7B3", borderRadius: 12, padding: "12px 16px" }}>
-          <SectionTitle>Bottlenecks — most over-capacity</SectionTitle>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-            {bottlenecks.slice(0, 8).map((r) => (
-              <span key={r.person} style={{ fontSize: 12, background: "#fff", border: "1px solid #E7B7B3", borderRadius: 999, padding: "3px 10px", color: "#A33D3D", fontWeight: 600 }}>
-                {r.person} · peak {r.peak.toFixed(1)}/{r.cap}
-              </span>
-            ))}
-          </div>
+      {groups.length ? (
+        <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12 }}>
+          <GanttGrid groups={groups} onOpen={onOpen} labelHeader="Project · deliverable" />
+        </div>
+      ) : (
+        <div style={{ background: T.paper, border: `1px dashed ${T.hairline}`, borderRadius: 12, padding: "26px 22px", color: T.inkSoft, fontSize: 13, lineHeight: 1.6, maxWidth: 780 }}>
+          <strong style={{ color: T.ink }}>No deliverable timelines yet.</strong> Two ways to populate:
+          <ol style={{ margin: "8px 0 0", paddingLeft: 20 }}>
+            <li>Open a project (unlock first) and <strong>Import timeline CSV</strong> for just that project, or</li>
+            <li><strong>Export build plan</strong> here, fill <code style={codeChip}>owner</code> / <code style={codeChip}>start</code> (e.g. <code style={codeChip}>Q3 2026 W2</code>) / <code style={codeChip}>weeks</code> for every deliverable, then <strong>Import (all projects)</strong>.</li>
+          </ol>
         </div>
       )}
-
-      <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12, overflowX: "auto" }}>
-        <div style={{ minWidth: LABEL + nWeeks * COL }}>
-          <div style={{ ...grid }}>
-            <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1 }} />
-            {qSpans.map((s) => <div key={s.q} style={{ gridColumn: `${2 + s.start} / span ${s.len}`, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.06em", color: T.inkSoft, borderLeft: `1px solid ${T.hairline}`, padding: "2px 0 2px 6px" }}>{s.q.toUpperCase()}</div>)}
-          </div>
-          <div style={{ ...grid, borderBottom: `1px solid ${T.hairline}` }}>
-            <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, fontFamily: T.mono, fontSize: 10, color: T.inkSoft, padding: "2px 8px" }}>TEAM MEMBER</div>
-            {weeks.map((w, i) => <div key={i} style={{ textAlign: "center", fontFamily: T.mono, fontSize: 9.5, color: T.inkSoft, borderLeft: weekLabel(w).wk === 1 ? `1px solid ${T.hairline}` : "none" }}>{weekLabel(w).wk}</div>)}
-          </div>
-
-          {rows.map((r) => {
-            const showGroup = r.group !== lastGroup; lastGroup = r.group;
-            return (
-              <div key={r.person}>
-                {showGroup && <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", color: T.inkSoft, padding: "10px 8px 3px", textTransform: "uppercase" }}>{r.group}</div>}
-                {/* heat row + label */}
-                <div style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairlineSoft}` }}>
-                  <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, padding: "5px 8px", fontSize: 12.5 }}>
-                    <span style={{ fontWeight: 600 }}>{r.person}</span>
-                    <span style={{ marginLeft: 6, fontSize: 10.5, color: T.inkSoft }}>cap </span>
-                    {unlocked
-                      ? <input type="number" min="1" value={r.cap} onChange={(e) => onSetWeekly(r.person, Math.max(1, Number(e.target.value) || 1))} style={{ width: 38, fontFamily: T.mono, fontSize: 11, padding: "1px 3px", border: `1px solid ${T.hairline}`, borderRadius: 5, textAlign: "center" }} />
-                      : <span style={{ fontFamily: T.mono, fontSize: 11, color: T.inkSoft }}>{r.cap}/wk</span>}
-                  </div>
-                  {r.load.map((l, i) => <div key={i} title={`${weekLabel(weeks[i]).q} W${weekLabel(weeks[i]).wk}: ${l.toFixed(1)}/${r.cap}`} style={{ height: 16, background: heatColor(l, r.cap), borderLeft: weekLabel(weeks[i]).wk === 1 ? `1px solid ${T.hairlineSoft}` : "none", textAlign: "center", fontSize: 9, color: "#A33D3D" }}>{l > r.cap ? "•" : ""}</div>)}
-                </div>
-                {/* lane rows with task bars */}
-                {r.lanes.map((lane, li) => (
-                  <div key={li} style={{ ...grid, marginTop: 3 }}>
-                    <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1 }} />
-                    {lane.map((t) => (
-                      <button key={t.key} onClick={() => onOpen(t.projectId)} title={`${t.code} · ${t.deliverable}`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, background: t.ws.soft, borderLeft: `3px solid ${t.ws.color}`, borderRadius: 5, padding: "3px 6px", fontFamily: T.body, fontSize: 11, color: T.ink, textAlign: "left", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
-                        <span style={{ fontFamily: T.mono, fontWeight: 700, color: t.ws.color }}>{t.code}</span> {t.deliverable}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      <div style={{ fontSize: 11.5, color: T.inkSoft, display: "flex", gap: 14, flexWrap: "wrap" }}>
-        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#E4F3EF", borderRadius: 2, marginRight: 4 }} />within capacity</span>
-        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#FBF0DD", borderRadius: 2, marginRight: 4 }} />stretched (≤1.5×)</span>
-        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#FBE0DE", borderRadius: 2, marginRight: 4 }} />over capacity</span>
-      </div>
     </div>
   );
 }
