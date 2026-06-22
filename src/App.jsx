@@ -892,10 +892,16 @@ function DeliverableEditor({ items, accent, onCommit }) {
   const [list, setList] = useState(items);
   useEffect(() => { setList(items); }, [items]);
   const push = (next) => { setList(next); onCommit(next); };
+  const move = (i, dir) => { const j = i + dir; if (j < 0 || j >= list.length) return; const next = list.slice(); [next[i], next[j]] = [next[j], next[i]]; push(next); };
+  const arrow = { background: "none", border: "none", padding: 0, width: 16, height: 14, lineHeight: "14px", fontSize: 10, color: T.inkSoft, cursor: "pointer" };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
       {list.map((d, i) => (
         <div key={i} style={{ display: "flex", gap: 7, alignItems: "center" }}>
+          <div style={{ display: "flex", flexDirection: "column", width: 16 }}>
+            <button onClick={() => move(i, -1)} disabled={i === 0} title="Move up" style={{ ...arrow, opacity: i === 0 ? 0.25 : 1 }}>▲</button>
+            <button onClick={() => move(i, 1)} disabled={i === list.length - 1} title="Move down" style={{ ...arrow, opacity: i === list.length - 1 ? 0.25 : 1 }}>▼</button>
+          </div>
           <button title={d.stretch ? "Stretch — click to commit" : "Committed — click to mark stretch"} onClick={() => push(list.map((x, j) => j === i ? { ...x, stretch: !x.stretch } : x))} style={{ background: "none", border: "none", fontSize: 14, color: d.stretch ? "#C9A24B" : accent, width: 18 }}>{d.stretch ? "○" : "✓"}</button>
           <input value={d.text} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, text: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="Deliverable" style={{ flex: 1, fontFamily: T.body, fontSize: 13, padding: "5px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink }} />
           <button onClick={() => push(list.filter((_, j) => j !== i))} style={xBtn} aria-label="Remove">✕</button>
