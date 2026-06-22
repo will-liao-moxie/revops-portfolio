@@ -769,17 +769,15 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
             <AccentCard accent="#C0463E" icon="!" title="The problem">{unlocked ? <AreaEdit value={p.problem} onCommit={(v) => onUpdate({ problem: v })} /> : <p style={cardText}>{p.problem}</p>}</AccentCard>
             <AccentCard accent={ws.color} icon="→" title="The solution">{unlocked ? <AreaEdit value={p.solution} onCommit={(v) => onUpdate({ solution: v })} /> : <p style={cardText}>{p.solution}</p>}</AccentCard>
 
-            <div style={{ background: "#EDF6F0", border: "1px solid #C9E4D6", borderRadius: 12, padding: "14px 16px" }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}><span style={{ fontSize: 14 }}>🎯</span><SectionTitle>Definition of success</SectionTitle></div>
-              {unlocked ? <AreaEdit value={p.success} onCommit={(v) => onUpdate({ success: v })} /> : <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.ink }}>{p.success}</p>}
-            </div>
+            <AccentCard accent="#1E8A4C" icon="✓" title="Definition of success">
+              {unlocked ? <AreaEdit value={p.success} onCommit={(v) => onUpdate({ success: v })} /> : <p style={cardText}>{p.success}</p>}
+            </AccentCard>
 
             {((p.openItems || []).length > 0 || unlocked) && (
-              <div style={{ background: "#FFF8EC", border: "1px solid #EFDFBC", borderRadius: 12, padding: "12px 16px" }}>
-                <SectionTitle>Risks & assumptions</SectionTitle>
-                {unlocked ? <div style={{ marginTop: 8 }}><StringListEditor items={p.openItems || []} placeholder="Add a risk or assumption" onCommit={(v) => onUpdate({ openItems: v })} /></div>
-                  : <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: "#6E5612" }}>{p.openItems.map((o, i) => <li key={i}>{o}</li>)}</ul>}
-              </div>
+              <AccentCard accent="#C28A12" icon="?" title="Risks & assumptions">
+                {unlocked ? <StringListEditor items={p.openItems || []} placeholder="Add a risk or assumption" onCommit={(v) => onUpdate({ openItems: v })} />
+                  : <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: T.ink }}>{p.openItems.map((o, i) => <li key={i}>{o}</li>)}</ul>}
+              </AccentCard>
             )}
           </div>
 
