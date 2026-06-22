@@ -279,11 +279,10 @@ export default function App() {
         * { box-sizing: border-box; }
         button { cursor: pointer; }
         button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid ${T.ink}; outline-offset: 2px; }
-        .proj-drawer { width: min(680px, 100%); }
+        .proj-drawer { width: 100%; }
         .proj-grid { display: flex; flex-direction: column; gap: 16px; }
         @media (min-width: 1080px) {
-          .proj-drawer { width: min(1120px, 96vw); }
-          .proj-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); gap: 20px; align-items: start; }
+          .proj-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(420px, 1fr); gap: 24px; align-items: start; }
         }
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
       `}</style>
