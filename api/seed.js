@@ -93,8 +93,8 @@ const SEED = [
     impact: 3, effort: "XS",
   },
   {
-    id: "sup-01", code: "SUP-01", title: "Account Setup & Visibility",
-    workstream: "Supplies", stakeholder: "Supplies team (Shannon Aubert, OAs)",
+    id: "sup-01", code: "PO-01", title: "Account Setup & Visibility",
+    workstream: "Practice Ops", stakeholder: "Supplies team (Shannon Aubert, OAs)",
     dri: "Shannon Aubert", targetWindow: "Q3 2026",
     problem: "Account setup runs across HubSpot, Zapier, and a Google Sheet, with no real-time status outside the Supplies team — so Providers and PSMs constantly ask via Slack where an account stands. It pulls OAs off setup work and won't scale with provider volume without added headcount.",
     solution: "Migrate the full account-setup intake and task lifecycle into ClickUp, mirrored into a new HubSpot Supplies Pipeline, with automated Intercom milestone tickets so Providers and PSMs self-serve status.",
@@ -117,8 +117,8 @@ const SEED = [
     impact: 4, effort: "M",
   },
   {
-    id: "sup-02", code: "SUP-02", title: "Ordering Process Improvements",
-    workstream: "Supplies", stakeholder: "Supplies team (Shannon Aubert, OAs)",
+    id: "sup-02", code: "PO-02", title: "Ordering Process Improvements",
+    workstream: "Practice Ops", stakeholder: "Supplies team (Shannon Aubert, OAs)",
     dri: "Shannon Aubert", targetWindow: "Q4 2026",
     problem: "OAs manually read order requests and log into individual vendor portals to place orders on Moxie’s internal accounts — highly manual and error-prone, with no systematic task management. Orders get dropped or placed incorrectly, and without automated vendor reporting, fulfillment visibility can’t be surfaced to providers.",
     solution: "Progressively reduce manual ordering: structured task management on the SUP-01 ClickUp foundation, then vendor portal API integrations to automate placement, with Omni fulfillment reporting from vendor data.",
@@ -141,8 +141,8 @@ const SEED = [
     impact: 4, effort: "L",
   },
   {
-    id: "sup-03", code: "SUP-03", title: "Spend & Rebate Reporting",
-    workstream: "Supplies", stakeholder: "Supplies team (Shannon Aubert, OAs)",
+    id: "sup-03", code: "PO-03", title: "Spend & Rebate Reporting",
+    workstream: "Practice Ops", stakeholder: "Supplies team (Shannon Aubert, OAs)",
     dri: "Shannon Aubert", targetWindow: "Q4 2026",
     problem: "Supplies orders run through a unified Shopify portal, but spend data isn’t connected to rebate targets in any systematic way. There’s no real-time view of spend vs. rebate thresholds, rebate commitments aren’t stored anywhere structured, and spend isn’t tied back to HubSpot for PSM account reviews.",
     solution: "Pull Shopify orders and rebate targets into the Data Warehouse, surface spend-vs-threshold progress in an Omni dashboard, and auto-trigger a ClickUp review when spend nears a rebate level.",
