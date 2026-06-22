@@ -154,10 +154,18 @@ async function apiWrite(path, method, payload) {
    (or its lead) in its Team & resourcing list. */
 function normName(s) { return (s || "").toLowerCase().trim().replace(/\s+/g, " ").replace(/ team$/, ""); }
 function resourceNames(resource) { return new Set([normName(resource.label), normName(resource.lead)].filter(Boolean)); }
-function rolesForResource(resource, p) { const names = resourceNames(resource); return (p.roles || []).filter((r) => names.has(normName(r.who))); }
-function resourceProjects(resource, projects) { return projects.filter((p) => rolesForResource(resource, p).length > 0); }
+function matchesResource(resource, who) { return resourceNames(resource).has(normName(who)); }
 function roleEffort(r) { return EFFORT_POINTS[r && r.effort] || EFFORT_POINTS.M; }
-function resourceUnitsOn(resource, p) { return rolesForResource(resource, p).reduce((s, r) => s + roleEffort(r), 0); }
+function quarterOf(start) { const idx = parseStart(start); return idx == null ? "TBD" : weekLabel(idx).q; }
+// A project's work assignments drive Resourcing. If it has a scheduled timeline (Gantt), those
+// tasks — owner + effort + the quarter each runs in — are the source of truth; otherwise fall
+// back to the Team & resourcing roles (project's target quarter).
+function projectAssignments(p) {
+  if ((p.schedule || []).length) return p.schedule.map((t) => ({ owner: t.owner || "", pts: EFFORT_POINTS[t.effort] || EFFORT_POINTS.M, quarter: quarterOf(t.start) }));
+  return (p.roles || []).map((r) => ({ owner: r.who || "", pts: roleEffort(r), quarter: p.targetWindow || "TBD" }));
+}
+function resourceProjects(resource, projects) { return projects.filter((p) => projectAssignments(p).some((a) => matchesResource(resource, a.owner))); }
+function resourceUnitsOn(resource, p) { return projectAssignments(p).filter((a) => matchesResource(resource, a.owner)).reduce((s, a) => s + a.pts, 0); }
 function projectLoad(p) { return EFFORT_POINTS[p.effort] || EFFORT_POINTS.M; }
 function resolveResource(org, who) { const n = normName(who); return allResources(org).find((r) => normName(r.label) === n || normName(r.lead) === n) || null; }
 function resourcePath(org, who) { const r = resolveResource(org, who); return r ? [r.group, r.label, r.lead].filter(Boolean).join(" · ") : who; }
@@ -526,16 +534,21 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
     const a = document.createElement("a"); a.href = url; a.download = "revops-roster.csv"; a.click();
     URL.revokeObjectURL(url);
   };
-  const quarters = useMemo(() => Array.from(new Set(projects.map((p) => p.targetWindow || "TBD"))).sort((a, b) => targetRank(a) - targetRank(b)), [projects]);
+  const quarters = useMemo(() => Array.from(new Set(projects.flatMap((p) => projectAssignments(p).map((a) => a.quarter)))).sort((a, b) => targetRank(a) - targetRank(b)), [projects]);
   const categories = useMemo(() => Array.from(new Set(projects.map((p) => p.workstream || "Other"))), [projects]);
   const resources = useMemo(() => allResources(org), [org]);
   const byGroup = {};
   (org || []).forEach((g) => { byGroup[g.name] = []; });
   resources.forEach((r) => {
-    const ps = resourceProjects(r, projects);
-    const unitsBy = {}, unitsByQ = {}, unitsByCat = {};
-    ps.forEach((p) => { const u = resourceUnitsOn(r, p); unitsBy[p.id] = u; const q = p.targetWindow || "TBD"; unitsByQ[q] = (unitsByQ[q] || 0) + u; const c = p.workstream || "Other"; unitsByCat[c] = (unitsByCat[c] || 0) + u; });
-    const units = ps.reduce((s, p) => s + unitsBy[p.id], 0);
+    const unitsBy = {}, unitsByQ = {}, unitsByCat = {}; let units = 0;
+    projects.forEach((p) => {
+      const mine = projectAssignments(p).filter((a) => matchesResource(r, a.owner));
+      if (!mine.length) return;
+      const u = mine.reduce((s, a) => s + a.pts, 0);
+      unitsBy[p.id] = u; units += u;
+      mine.forEach((a) => { unitsByQ[a.quarter] = (unitsByQ[a.quarter] || 0) + a.pts; });
+      const c = p.workstream || "Other"; unitsByCat[c] = (unitsByCat[c] || 0) + u;
+    });
     const peak = Math.max(0, ...Object.values(unitsByQ));
     (byGroup[r.group] = byGroup[r.group] || []).push({ ...r, unitsBy, unitsByQ, unitsByCat, units, peak });
   });
@@ -1071,7 +1084,8 @@ function parseTasksCsv(text) {
     const r = rows[k]; const del = at(r, "deliverable"), owner = at(r, "owner"), start = at(r, "start"), weeks = at(r, "weeks");
     if (!del || !start || !weeks) continue;
     if (parseStart(start) == null) continue;
-    tasks.push({ deliverable: del, owner, start, weeks: Math.max(1, Number(weeks) || 1) });
+    const eff = (at(r, "effort") || "M").toUpperCase();
+    tasks.push({ deliverable: del, owner, start, weeks: Math.max(1, Number(weeks) || 1), effort: EFFORTS.includes(eff) ? eff : "M" });
   }
   return { tasks, error: tasks.length ? "" : "No valid rows (need deliverable, start like 'Q3 2026 W2', and weeks)." };
 }
@@ -1231,7 +1245,7 @@ function TimelineImportModal({ heading, onClose, onApply }) {
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, width: "min(640px, 100%)", maxHeight: "88vh", overflowY: "auto", padding: 26, fontFamily: T.body }}>
         <h2 style={{ ...h2Style, marginTop: 0 }}>{heading || "Import timeline"}</h2>
-        <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "6px 0 14px" }}>Paste CSV or upload a file. Columns: <code style={codeChip}>deliverable, owner, start, weeks</code> — <code style={codeChip}>start</code> like <code style={codeChip}>Q3 2026 W2</code> (W1–W13 in a quarter), <code style={codeChip}>weeks</code> = duration. Combine two owners with <code style={codeChip}> · </code>.</p>
+        <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "6px 0 14px" }}>Paste CSV or upload a file. Columns: <code style={codeChip}>deliverable, owner, start, weeks</code> (optional <code style={codeChip}>effort</code> XS–XL) — <code style={codeChip}>start</code> like <code style={codeChip}>Q3 2026 W2</code> (W1–W13 in a quarter), <code style={codeChip}>weeks</code> = duration. The <code style={codeChip}>owner</code> should be a roster team or its lead — it drives that team's load in Resourcing; <code style={codeChip}>effort</code> sizes it (defaults M).</p>
         <label style={lbl}>UPLOAD .CSV</label>
         <input type="file" accept=".csv,text/csv" onChange={onFile} style={{ fontSize: 12.5, marginBottom: 10 }} />
         <label style={lbl}>OR PASTE CSV</label>

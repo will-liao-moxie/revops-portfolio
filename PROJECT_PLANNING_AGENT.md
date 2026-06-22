@@ -187,11 +187,11 @@ row, owner as the subtitle), and they roll up into the app's **Master Gantt**. T
 project's timeline, generate a CSV and the user imports it from that project's doc (**Import
 timeline CSV**).
 
-**Columns:** `deliverable, owner, start, weeks`
+**Columns:** `deliverable, owner, start, weeks` (optional `effort` XS–XL)
 - `deliverable` — the bar label (the thing being built). One row per bar; duplicate the
   deliverable across rows if distinct chunks run at different times.
-- `owner` — short label shown under the deliverable. Use a roster team/person; combine up to two
-  with ` · ` (e.g. `Business Systems · HubSpot`).
+- `owner` — **must be a roster team or its lead** (e.g. `Business Systems`, or `Empty Cup Digital` for HubSpot). The owner **drives that team's load in the Resourcing views** — when a project has a timeline, its scheduled tasks (owner + effort + the quarter from `start`) are the source of truth for allocation, replacing the project's `team` roles. Combine up to two owners with ` · `.
+- `effort` — optional XS–XL; sizes the owner's load for that task in Resourcing (defaults to M).
 - `start` — `Q# YYYY W#`, where W1–W13 are the weeks within that quarter (e.g. `Q3 2026 W2`).
 - `weeks` — duration in weeks (integer ≥ 1).
 
