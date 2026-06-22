@@ -22,9 +22,10 @@ const T = {
 /* known workstreams keep a code prefix; every workstream (known or new) draws its COLOR
    from one well-separated categorical palette so no two ever look alike. */
 const WS = {
-  "Marketing Services": { code: "MS" },
+  "Marketing Services": { code: "MKS" },
   "Supplies": { code: "SUP" },
-  "Practice Success": { code: "PS" },
+  "Practice Ops": { code: "POP" },
+  "Practice Success": { code: "PRS" },
   "Support": { code: "SPT" },
 };
 // curated, mutually-distinct, mid-tone (readable as text) categorical palette

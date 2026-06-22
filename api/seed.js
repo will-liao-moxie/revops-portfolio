@@ -4,7 +4,7 @@ import { requireEditKey, parseBody, getProjects, saveProjects } from "./_lib/kv.
    No status, no effort (size is the single cost measure). */
 const SEED = [
   {
-    id: "ms-01", code: "MS-01", title: "Multi-Touch Attribution Model",
+    id: "ms-01", code: "MKS-01", title: "Multi-Touch Attribution Model",
     workstream: "Marketing Services", stakeholder: "Marketing Services (Paid Media)",
     dri: "", targetWindow: "Q3 2026",
     problem: "Moxie has no unified model linking paid advertising (Meta/Google) to revenue — pipelines only track Meta form submissions and miss primary Google Ads drivers like phone calls. Without it we can't separate organic from paid or see cross-channel patient journeys, so marketing decisions aren't data-backed.",
@@ -26,7 +26,7 @@ const SEED = [
     impact: 5, effort: "XL",
   },
   {
-    id: "ms-02", code: "MS-02", title: "Media Management Platform",
+    id: "ms-02", code: "MKS-02", title: "Media Management Platform",
     workstream: "Marketing Services", stakeholder: "Marketing Services (Paid Media)",
     dri: "", targetWindow: "Q4 2026",
     problem: "The paid media team loses disproportionate time to manual ad configuration across disconnected platforms, with no dedicated tooling for spend decisions. Client campaigns also run under a shared “Moxie HQ” account, blocking clean per-client billing and reporting.",
@@ -49,7 +49,7 @@ const SEED = [
     impact: 4, effort: "L",
   },
   {
-    id: "ms-03", code: "MS-03", title: "AI-Powered Creative Production Workflow",
+    id: "ms-03", code: "MKS-03", title: "AI-Powered Creative Production Workflow",
     workstream: "Marketing Services", stakeholder: "Marketing Services (Paid Media)",
     dri: "", targetWindow: "Q4 2026",
     problem: "Ad creative production is highly manual — built in Canva/CapCut, then shuffled by hand through FileCamp, Google Drive, and each ad platform. Thin templating means creatives overlap across customers, capping campaign effectiveness across Meta, Google, and SMS.",
@@ -72,7 +72,7 @@ const SEED = [
     impact: 4, effort: "M",
   },
   {
-    id: "ms-04", code: "MS-04", title: "Meta Ads Segment-Based Service Gating",
+    id: "ms-04", code: "MKS-04", title: "Meta Ads Segment-Based Service Gating",
     workstream: "Marketing Services", stakeholder: "Marketing Services (Paid Media)",
     dri: "Johanna Singer", targetWindow: "Q3 2026",
     problem: "Meta Ads service eligibility rules exist in policy but aren't enforced by systems, so customers and PSMs submit requests their segment doesn't qualify for. That creates invalid campaign requests, internal escalations, and inconsistent service delivery.",
@@ -93,7 +93,7 @@ const SEED = [
     impact: 3, effort: "XS",
   },
   {
-    id: "sup-01", code: "PO-01", title: "Account Setup & Visibility",
+    id: "sup-01", code: "POP-01", title: "Account Setup & Visibility",
     workstream: "Practice Ops", stakeholder: "Supplies team (Shannon Aubert, OAs)",
     dri: "Shannon Aubert", targetWindow: "Q3 2026",
     problem: "Account setup runs across HubSpot, Zapier, and a Google Sheet, with no real-time status outside the Supplies team — so Providers and PSMs constantly ask via Slack where an account stands. It pulls OAs off setup work and won't scale with provider volume without added headcount.",
@@ -117,7 +117,7 @@ const SEED = [
     impact: 4, effort: "M",
   },
   {
-    id: "sup-02", code: "PO-02", title: "Ordering Process Improvements",
+    id: "sup-02", code: "POP-02", title: "Ordering Process Improvements",
     workstream: "Practice Ops", stakeholder: "Supplies team (Shannon Aubert, OAs)",
     dri: "Shannon Aubert", targetWindow: "Q4 2026",
     problem: "OAs manually read order requests and log into individual vendor portals to place orders on Moxie’s internal accounts — highly manual and error-prone, with no systematic task management. Orders get dropped or placed incorrectly, and without automated vendor reporting, fulfillment visibility can’t be surfaced to providers.",
@@ -141,7 +141,7 @@ const SEED = [
     impact: 4, effort: "L",
   },
   {
-    id: "sup-03", code: "PO-03", title: "Spend & Rebate Reporting",
+    id: "sup-03", code: "POP-03", title: "Spend & Rebate Reporting",
     workstream: "Practice Ops", stakeholder: "Supplies team (Shannon Aubert, OAs)",
     dri: "Shannon Aubert", targetWindow: "Q4 2026",
     problem: "Supplies orders run through a unified Shopify portal, but spend data isn’t connected to rebate targets in any systematic way. There’s no real-time view of spend vs. rebate thresholds, rebate commitments aren’t stored anywhere structured, and spend isn’t tied back to HubSpot for PSM account reviews.",
@@ -166,7 +166,7 @@ const SEED = [
     impact: 3, effort: "M",
   },
   {
-    id: "ps-01", code: "PS-01", title: "Increase Tier 0 Visibility in Moxie Suite",
+    id: "ps-01", code: "PRS-01", title: "Increase Tier 0 Visibility in Moxie Suite",
     workstream: "Practice Success", stakeholder: "Practice Success",
     dri: "", targetWindow: "Q1 2027",
     problem: "Moxie Concierge is hard for providers to discover and reachable from only limited areas of Moxie Suite, so providers bypass it and contact their PSM for questions Concierge could resolve. Those who find it often don’t know what it handles, taking trial and error before they find value.",
