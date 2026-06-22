@@ -671,15 +671,13 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
   const depOptions = Object.values(byId).filter((x) => x.id !== p.id);
   const targetOpts = Array.from(new Set([p.targetWindow || "TBD", ...TARGETS]));
   const [ganttMsg, setGanttMsg] = useState("");
+  const [showImport, setShowImport] = useState(false);
   const ganttTasks = projectTasks(p);
-  const onGanttFile = (e) => {
-    const f = e.target.files[0]; if (!f) return;
-    const rd = new FileReader();
-    rd.onload = () => { const { tasks, error } = parseTasksCsv(String(rd.result || "")); if (error) { setGanttMsg(error); return; } onUpdate({ schedule: tasks }); setGanttMsg(`Loaded ${tasks.length} deliverable${tasks.length === 1 ? "" : "s"} into the timeline.`); };
-    rd.readAsText(f); e.target.value = "";
-  };
+  const applyTimeline = (tasks) => { onUpdate({ schedule: tasks }); setShowImport(false); setGanttMsg(`Loaded ${tasks.length} deliverable${tasks.length === 1 ? "" : "s"} into the timeline.`); };
 
   return (
+    <>
+    {showImport && <TimelineImportModal heading={`Import timeline — ${p.code}`} onClose={() => setShowImport(false)} onApply={applyTimeline} />}
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
       <div className="proj-drawer" onClick={(e) => e.stopPropagation()} style={{ height: "100%", background: T.bg, overflowY: "auto", boxShadow: "-12px 0 40px rgba(28,37,33,.18)", fontFamily: T.body }}>
         <div style={{ padding: "22px 26px 18px", background: T.surface, borderBottom: `1px solid ${T.hairline}`, position: "sticky", top: 0, zIndex: 2 }}>
@@ -780,7 +778,7 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
         <div style={{ padding: "10px 26px 0" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
             <SectionTitle>Timeline — deliverables × owner</SectionTitle>
-            {unlocked && <label style={{ ...btnGhost, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12 }}>↑ Import timeline CSV<input type="file" accept=".csv,text/csv" onChange={onGanttFile} style={{ display: "none" }} /></label>}
+            {unlocked && <button onClick={() => setShowImport(true)} style={{ ...btnGhost, fontSize: 12 }}>↑ Import timeline CSV</button>}
           </div>
           {ganttMsg && <div style={{ fontSize: 12, color: ganttMsg.startsWith("Loaded") ? "#0E8A74" : "#A33D3D", marginBottom: 8 }}>{ganttMsg}</div>}
           {ganttTasks.length
@@ -791,6 +789,7 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
         {unlocked && <div style={{ padding: "12px 26px 32px" }}><button onClick={onRemove} style={{ fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "9px 14px", borderRadius: 8, background: "none", border: "1px solid #D9A0A0", color: "#A33D3D" }}>Remove project</button></div>}
       </div>
     </div>
+    </>
   );
 }
 
@@ -1135,10 +1134,17 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
     rd.readAsText(f); e.target.value = "";
   };
 
-  const groups = projects.map((p) => ({ key: p.id, label: `${p.code} · ${p.title}`, color: wsMeta(p.workstream).color, tasks: projectTasks(p) })).filter((g) => g.tasks.length);
+  const groups = projects.map((p) => {
+    const ws = wsMeta(p.workstream); const tasks = projectTasks(p); if (!tasks.length) return null;
+    return { p, ws, tasks, gMin: Math.min(...tasks.map((t) => t.idx)), gMax: Math.max(...tasks.map((t) => t.idx + t.weeks - 1)) };
+  }).filter(Boolean);
+  const [expanded, setExpanded] = useState({});
+  const toggle = (id) => setExpanded((e) => ({ ...e, [id]: !e[id] }));
+  const allOpen = groups.length > 0 && groups.every((g) => expanded[g.p.id]);
 
   const controls = (
     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      {groups.length > 0 && <button onClick={() => { const next = {}; groups.forEach((g) => { next[g.p.id] = !allOpen; }); setExpanded(next); }} style={btnGhost}>{allOpen ? "Collapse all" : "Expand all"}</button>}
       <button onClick={exportPlan} disabled={!projects.length} style={btnGhost}>↓ Export build plan</button>
       {unlocked && <label style={{ ...btnGhost, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>↑ Import (all projects)<input type="file" accept=".csv,text/csv" onChange={onFile} style={{ display: "none" }} /></label>}
       {busy && <span style={{ fontSize: 12, color: T.inkSoft }}>Importing…</span>}
@@ -1146,15 +1152,58 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
     </div>
   );
 
+  const all = groups.flatMap((g) => g.tasks);
+  const minIdx = all.length ? Math.min(...all.map((t) => t.idx)) : 0, maxIdx = all.length ? Math.max(...all.map((t) => t.idx + t.weeks - 1)) : 0;
+  const nWeeks = maxIdx - minIdx + 1;
+  const weeks = Array.from({ length: nWeeks }, (_, i) => minIdx + i);
+  const COL = 40, LABEL = 260;
+  const grid = { display: "grid", gridTemplateColumns: `${LABEL}px repeat(${nWeeks}, ${COL}px)` };
+  const qSpans = [];
+  weeks.forEach((w, i) => { const q = weekLabel(w).q; const last = qSpans[qSpans.length - 1]; if (last && last.q === q) last.len++; else qSpans.push({ q, start: i, len: 1 }); });
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
-        <div><h2 style={{ ...h2Style, marginBottom: 2 }}>Master Gantt</h2><p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>Every project's deliverables on one timeline, grouped by project and colored by workstream. Each bar is a deliverable; the subtitle is its owner. Click a row to open the project.</p></div>
+        <div><h2 style={{ ...h2Style, marginBottom: 2 }}>Master Gantt</h2><p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>One overall bar per project across the timeline. Click a project (its row or bar) to break it out into deliverables.</p></div>
         {controls}
       </div>
       {groups.length ? (
-        <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12 }}>
-          <GanttGrid groups={groups} onOpen={onOpen} labelHeader="Project · deliverable" />
+        <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12, overflowX: "auto" }}>
+          <div style={{ minWidth: LABEL + nWeeks * COL }}>
+            <div style={grid}>
+              <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1 }} />
+              {qSpans.map((s) => <div key={s.q} style={{ gridColumn: `${2 + s.start} / span ${s.len}`, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.06em", color: T.inkSoft, borderLeft: `1px solid ${T.hairline}`, padding: "2px 0 2px 6px" }}>{s.q.toUpperCase()}</div>)}
+            </div>
+            <div style={{ ...grid, borderBottom: `1px solid ${T.hairline}` }}>
+              <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, fontFamily: T.mono, fontSize: 10, color: T.inkSoft, padding: "2px 8px" }}>PROJECT</div>
+              {weeks.map((w, i) => <div key={i} style={{ textAlign: "center", fontFamily: T.mono, fontSize: 9.5, color: T.inkSoft, borderLeft: weekLabel(w).wk === 1 ? `1px solid ${T.hairline}` : "none" }}>W{weekLabel(w).wk}</div>)}
+            </div>
+            {groups.map((g) => {
+              const isOpen = !!expanded[g.p.id];
+              return (
+                <div key={g.p.id}>
+                  <div style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairline}` }}>
+                    <button onClick={() => toggle(g.p.id)} style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, textAlign: "left", border: "none", padding: "8px 8px", cursor: "pointer", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+                      <span style={{ color: T.inkSoft, marginRight: 5 }}>{isOpen ? "▾" : "▸"}</span>
+                      <span style={{ fontFamily: T.mono, fontWeight: 700, color: g.ws.color, fontSize: 11 }}>{g.p.code}</span>
+                      <span style={{ fontWeight: 600, fontSize: 12.5, color: T.ink, marginLeft: 6 }}>{g.p.title}</span>
+                      <span style={{ fontSize: 11, color: T.inkSoft, marginLeft: 6 }}>· {g.tasks.length}</span>
+                    </button>
+                    <button onClick={() => toggle(g.p.id)} title={`${g.p.code} · ${g.tasks.length} deliverables · ${weekLabel(g.gMin).q} W${weekLabel(g.gMin).wk} → ${weekLabel(g.gMax).q} W${weekLabel(g.gMax).wk}`} style={{ gridColumn: `${2 + (g.gMin - minIdx)} / span ${g.gMax - g.gMin + 1}`, gridRow: 1, alignSelf: "center", height: 24, background: g.ws.soft, border: `1px solid ${g.ws.color}`, borderLeft: `3px solid ${g.ws.color}`, borderRadius: 6, color: g.ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "0 8px", textAlign: "left", overflow: "hidden", whiteSpace: "nowrap", cursor: "pointer", margin: "4px 2px" }}>{g.p.code}</button>
+                  </div>
+                  {isOpen && g.tasks.map((t) => (
+                    <div key={t.key} style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairlineSoft}` }}>
+                      <button onClick={() => onOpen(g.p.id)} style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, textAlign: "left", border: "none", padding: "6px 8px 6px 26px", cursor: "pointer", overflow: "hidden" }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.deliverable}</div>
+                        {t.owner && <div style={{ fontSize: 10.5, color: g.ws.color }}>{t.owner}</div>}
+                      </button>
+                      <div title={`${t.deliverable}${t.owner ? " · " + t.owner : ""} · ${weekLabel(t.idx).q} W${weekLabel(t.idx).wk} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 16, background: g.ws.soft, border: `1px solid ${g.ws.color}`, borderLeft: `3px solid ${g.ws.color}`, borderRadius: 4, margin: "4px 2px" }} />
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : (
         <div style={{ background: T.paper, border: `1px dashed ${T.hairline}`, borderRadius: 12, padding: "26px 22px", color: T.inkSoft, fontSize: 13, lineHeight: 1.6, maxWidth: 780 }}>
@@ -1165,6 +1214,35 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
           </ol>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ---------- TIMELINE IMPORT MODAL (paste or file) ---------- */
+function TimelineImportModal({ heading, onClose, onApply }) {
+  const [text, setText] = useState("");
+  const [err, setErr] = useState("");
+  const parsed = useMemo(() => parseTasksCsv(text), [text]);
+  const onFile = (e) => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { setText(String(rd.result || "")); setErr(""); }; rd.readAsText(f); e.target.value = ""; };
+  const apply = () => { if (!parsed.tasks.length) { setErr(parsed.error || "Nothing to import."); return; } onApply(parsed.tasks); };
+  const field = { fontFamily: T.body, fontSize: 13, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, width: "100%" };
+  const lbl = { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft, marginBottom: 5, display: "block" };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, width: "min(640px, 100%)", maxHeight: "88vh", overflowY: "auto", padding: 26, fontFamily: T.body }}>
+        <h2 style={{ ...h2Style, marginTop: 0 }}>{heading || "Import timeline"}</h2>
+        <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "6px 0 14px" }}>Paste CSV or upload a file. Columns: <code style={codeChip}>deliverable, owner, start, weeks</code> — <code style={codeChip}>start</code> like <code style={codeChip}>Q3 2026 W2</code> (W1–W13 in a quarter), <code style={codeChip}>weeks</code> = duration. Combine two owners with <code style={codeChip}> · </code>.</p>
+        <label style={lbl}>UPLOAD .CSV</label>
+        <input type="file" accept=".csv,text/csv" onChange={onFile} style={{ fontSize: 12.5, marginBottom: 10 }} />
+        <label style={lbl}>OR PASTE CSV</label>
+        <textarea value={text} onChange={(e) => { setText(e.target.value); setErr(""); }} rows={8} placeholder={"deliverable,owner,start,weeks\nCreate + populate field,Business Systems · HubSpot,Q3 2026 W1,1"} style={{ ...field, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, resize: "vertical" }} />
+        <div style={{ fontSize: 12.5, color: parsed.error ? "#A33D3D" : T.inkSoft, margin: "8px 0 0" }}>{text.trim() ? (parsed.error || `${parsed.tasks.length} deliverable${parsed.tasks.length === 1 ? "" : "s"} ready.`) : "Waiting for CSV…"}</div>
+        {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "8px 0 0" }}>{err}</p>}
+        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+          <button onClick={apply} disabled={!parsed.tasks.length} style={{ ...btnSolid, opacity: parsed.tasks.length ? 1 : 0.5 }}>Import {parsed.tasks.length || ""} deliverable{parsed.tasks.length === 1 ? "" : "s"}</button>
+          <button onClick={onClose} style={btnGhost}>Cancel</button>
+        </div>
+      </div>
     </div>
   );
 }
