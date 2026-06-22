@@ -185,6 +185,8 @@ function resourceUnitsOn(resource, p) { return projectAssignments(p).filter((a) 
 function projectLoad(p) { return EFFORT_POINTS[p.effort] || EFFORT_POINTS.M; }
 function resolveResource(org, who) { const n = normName(who); return allResources(org).find((r) => normName(r.label) === n || normName(r.lead) === n) || null; }
 function resourcePath(org, who) { const r = resolveResource(org, who); return r ? [r.group, r.label, r.lead].filter(Boolean).join(" · ") : who; }
+// like resourcePath, but appends "· PM <name>" when the resource has a project manager (used in the timeline)
+function resourcePathPM(org, who) { const r = resolveResource(org, who); if (!r) return who; const base = [r.group, r.label, r.lead].filter(Boolean).join(" · "); return r.pm ? `${base} · PM ${r.pm}` : base; }
 function allResources(org) {
   const out = [];
   (org || []).forEach((g) => {
@@ -1244,7 +1246,7 @@ function GanttGrid({ groups, org, onOpen, labelHeader = "Deliverable" }) {
   const minIdx = Math.min(...all.map((t) => t.idx)), maxIdx = Math.max(...all.map((t) => t.idx + t.weeks - 1));
   const nWeeks = maxIdx - minIdx + 1;
   const weeks = Array.from({ length: nWeeks }, (_, i) => minIdx + i);
-  const MINCOL = 46, LABEL = 340;
+  const MINCOL = 46, LABEL = 400;
   const grid = { display: "grid", gridTemplateColumns: `${LABEL}px repeat(${nWeeks}, minmax(${MINCOL}px, 1fr))` };
   const qSpans = [];
   weeks.forEach((w, i) => { const q = weekLabel(w).q; const last = qSpans[qSpans.length - 1]; if (last && last.q === q) last.len++; else qSpans.push({ q, start: i, len: 1 }); });
@@ -1265,7 +1267,7 @@ function GanttGrid({ groups, org, onOpen, labelHeader = "Deliverable" }) {
           <div key={g.key}>
             {g.label && <div style={{ ...grid }}><div style={{ gridColumn: "1 / -1", position: "sticky", left: 0, background: T.paper, padding: "8px 8px 4px", fontFamily: T.display, fontWeight: 700, fontSize: 13, color: g.color || T.ink, borderTop: `1px solid ${T.hairline}` }}>{g.label}</div></div>}
             {g.tasks.map((t) => {
-              const ownerPath = t.owner ? resourcePath(org, t.owner) : "";
+              const ownerPath = t.owner ? resourcePathPM(org, t.owner) : "";
               const dt = delivType(t.stretch);
               return (
                 <div key={t.key} style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairlineSoft}` }}>
@@ -1334,7 +1336,7 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
   const minIdx = all.length ? Math.min(...all.map((t) => t.idx)) : 0, maxIdx = all.length ? Math.max(...all.map((t) => t.idx + t.weeks - 1)) : 0;
   const nWeeks = maxIdx - minIdx + 1;
   const weeks = Array.from({ length: nWeeks }, (_, i) => minIdx + i);
-  const COL = 40, LABEL = 380;
+  const COL = 40, LABEL = 440;
   const grid = { display: "grid", gridTemplateColumns: `${LABEL}px repeat(${nWeeks}, ${COL}px)` };
   const qSpans = [];
   weeks.forEach((w, i) => { const q = weekLabel(w).q; const last = qSpans[qSpans.length - 1]; if (last && last.q === q) last.len++; else qSpans.push({ q, start: i, len: 1 }); });
@@ -1373,7 +1375,7 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
                     <button onClick={() => toggle(g.p.id)} title={`${g.p.code} · ${g.tasks.length} deliverables · ${weekLabel(g.gMin).q} W${weekLabel(g.gMin).wk} → ${weekLabel(g.gMax).q} W${weekLabel(g.gMax).wk}`} style={{ gridColumn: `${2 + (g.gMin - minIdx)} / span ${g.gMax - g.gMin + 1}`, gridRow: 1, alignSelf: "center", height: 24, background: g.ws.soft, border: `1px solid ${g.ws.color}`, borderLeft: `3px solid ${g.ws.color}`, borderRadius: 6, color: g.ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "0 8px", textAlign: "left", overflow: "hidden", whiteSpace: "nowrap", cursor: "pointer", margin: "4px 2px" }}>{g.p.code}</button>
                   </div>
                   {isOpen && g.tasks.map((t) => {
-                    const ownerPath = t.owner ? resourcePath(org, t.owner) : "";
+                    const ownerPath = t.owner ? resourcePathPM(org, t.owner) : "";
                     const dt = delivType(t.stretch);
                     return (
                     <div key={t.key} style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairlineSoft}` }}>
