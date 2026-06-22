@@ -199,6 +199,20 @@ function allResources(org) {
 }
 
 /* ---------- atoms ---------- */
+// render plain text but turn any http(s):// or www. URL into a clickable link (trailing punctuation kept outside the link)
+function Linkify({ children }) {
+  const text = children == null ? "" : String(children);
+  if (!text) return null;
+  const parts = text.split(/(https?:\/\/[^\s]+|www\.[^\s]+)/gi);
+  return parts.map((part, i) => {
+    if (!/^(https?:\/\/|www\.)/i.test(part)) return part;
+    const m = part.match(/[.,;:!?)\]}>"']+$/);
+    const trail = m ? m[0] : "";
+    const url = trail ? part.slice(0, -trail.length) : part;
+    const href = url.startsWith("http") ? url : "https://" + url;
+    return <span key={i}><a href={href} target="_blank" rel="noopener noreferrer" style={{ color: "#2C6BAE", textDecoration: "underline", wordBreak: "break-word" }}>{url}</a>{trail}</span>;
+  });
+}
 function Eyebrow({ children, color }) { return <span style={{ fontFamily: T.mono, fontSize: 11, letterSpacing: "0.08em", fontWeight: 600, color: color || T.inkSoft }}>{children}</span>; }
 function Chip({ children, bg, fg }) { return <span style={{ fontFamily: T.body, fontSize: 11.5, fontWeight: 500, padding: "3px 9px", borderRadius: 999, background: bg || T.hairlineSoft, color: fg || T.ink, whiteSpace: "nowrap" }}>{children}</span>; }
 function ScoreDots({ value, color }) {
@@ -768,17 +782,17 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
 
         <div className="proj-grid" style={{ padding: "20px 26px 6px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-            <AccentCard accent="#C0463E" icon="!" title="The problem">{unlocked ? <AreaEdit value={p.problem} onCommit={(v) => onUpdate({ problem: v })} /> : <p style={cardText}>{p.problem}</p>}</AccentCard>
-            <AccentCard accent={ws.color} icon="→" title="The solution">{unlocked ? <AreaEdit value={p.solution} onCommit={(v) => onUpdate({ solution: v })} /> : <p style={cardText}>{p.solution}</p>}</AccentCard>
+            <AccentCard accent="#C0463E" icon="!" title="The problem">{unlocked ? <AreaEdit value={p.problem} onCommit={(v) => onUpdate({ problem: v })} /> : <p style={cardText}><Linkify>{p.problem}</Linkify></p>}</AccentCard>
+            <AccentCard accent={ws.color} icon="→" title="The solution">{unlocked ? <AreaEdit value={p.solution} onCommit={(v) => onUpdate({ solution: v })} /> : <p style={cardText}><Linkify>{p.solution}</Linkify></p>}</AccentCard>
 
             <AccentCard accent="#1E8A4C" icon="✓" title="Definition of success">
-              {unlocked ? <AreaEdit value={p.success} onCommit={(v) => onUpdate({ success: v })} /> : <p style={cardText}>{p.success}</p>}
+              {unlocked ? <AreaEdit value={p.success} onCommit={(v) => onUpdate({ success: v })} /> : <p style={cardText}><Linkify>{p.success}</Linkify></p>}
             </AccentCard>
 
             {((p.openItems || []).length > 0 || unlocked) && (
               <AccentCard accent="#C28A12" icon="?" title="Risks & assumptions">
                 {unlocked ? <StringListEditor items={p.openItems || []} placeholder="Add a risk or assumption" onCommit={(v) => onUpdate({ openItems: v })} />
-                  : <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: T.ink }}>{p.openItems.map((o, i) => <li key={i}>{o}</li>)}</ul>}
+                  : <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: T.ink }}>{p.openItems.map((o, i) => <li key={i}><Linkify>{o}</Linkify></li>)}</ul>}
               </AccentCard>
             )}
           </div>
@@ -797,7 +811,7 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
                             <span style={{ fontWeight: 600 }}>{resourcePath(org, r.who)}</span>
                             <EffortChip effort={r.effort} />
                           </div>
-                          {r.what && <div style={{ color: T.inkSoft, lineHeight: 1.45, marginTop: 2 }}>{r.what}</div>}
+                          {r.what && <div style={{ color: T.inkSoft, lineHeight: 1.45, marginTop: 2 }}><Linkify>{r.what}</Linkify></div>}
                         </div>
                       </div>
                     );
@@ -811,7 +825,7 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
               <Panel title="Depends on">
                 {unlocked ? <DependsEditor items={deps} options={depOptions} onCommit={(v) => onUpdate({ dependsOn: v })} /> : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {deps.map((d, i) => { const dep = byId[d.id]; return <div key={i} style={{ fontSize: 13, lineHeight: 1.5, display: "flex", gap: 8, alignItems: "baseline" }}><span style={{ color: "#A33D3D", fontWeight: 700 }}>↳</span><span>{dep ? <button onClick={() => onOpen(dep.id)} style={linkBtn}>{dep.code} — {dep.title}</button> : <span style={{ fontWeight: 600 }}>Outside this portfolio</span>}{d.note && <span style={{ color: T.inkSoft }}> — {d.note}</span>}</span></div>; })}
+                    {deps.map((d, i) => { const dep = byId[d.id]; return <div key={i} style={{ fontSize: 13, lineHeight: 1.5, display: "flex", gap: 8, alignItems: "baseline" }}><span style={{ color: "#A33D3D", fontWeight: 700 }}>↳</span><span>{dep ? <button onClick={() => onOpen(dep.id)} style={linkBtn}>{dep.code} — {dep.title}</button> : <span style={{ fontWeight: 600 }}>Outside this portfolio</span>}{d.note && <span style={{ color: T.inkSoft }}> — <Linkify>{d.note}</Linkify></span>}</span></div>; })}
                   </div>
                 )}
               </Panel>
@@ -825,11 +839,11 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
             <Panel title={`What's being built${committed.length ? ` · ${committed.length}` : ""}`}>
               {unlocked ? <DeliverableEditor items={p.deliverables || []} accent={ws.color} onCommit={(v) => onUpdate({ deliverables: v })} /> : (
                 <>
-                  <ul style={listReset}>{committed.map((d, i) => <li key={i} style={liRow}><span style={{ color: DELIV_TYPE.required.color, fontWeight: 700, marginTop: 1 }}>✓</span><span>{d.text}</span></li>)}</ul>
+                  <ul style={listReset}>{committed.map((d, i) => <li key={i} style={liRow}><span style={{ color: DELIV_TYPE.required.color, fontWeight: 700, marginTop: 1 }}>✓</span><span><Linkify>{d.text}</Linkify></span></li>)}</ul>
                   {stretch.length > 0 && (
                     <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px dashed ${T.hairline}` }}>
                       <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: DELIV_TYPE.optional.color, marginBottom: 8 }}>STRETCH — IF TIME ALLOWS</div>
-                      <ul style={listReset}>{stretch.map((d, i) => <li key={i} style={{ ...liRow, color: T.inkSoft }}><span style={{ color: DELIV_TYPE.optional.color, marginTop: 1 }}>○</span><span>{d.text}</span></li>)}</ul>
+                      <ul style={listReset}>{stretch.map((d, i) => <li key={i} style={{ ...liRow, color: T.inkSoft }}><span style={{ color: DELIV_TYPE.optional.color, marginTop: 1 }}>○</span><span><Linkify>{d.text}</Linkify></span></li>)}</ul>
                     </div>
                   )}
                 </>
