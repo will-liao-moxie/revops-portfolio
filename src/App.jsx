@@ -66,6 +66,7 @@ const EFFORT_POINTS = { XS: 1, S: 2, M: 3, L: 4, XL: 5 };
 const EFFORT_LABEL = { XS: "Extra-small", S: "Small", M: "Medium", L: "Large", XL: "Extra-large" };
 const DEFAULT_CAP = 6;
 const TARGETS = ["TBD", "Q3 2026", "Q4 2026", "Q1 2027", "Q2 2027", "Q3 2027", "Q4 2027"];
+const QUARTERS = TARGETS.filter((t) => t !== "TBD");
 function targetRank(t) {
   if (!t || t.toUpperCase() === "TBD") return 999999;
   let m = t.match(/Q([1-4])\s*(\d{4})/i); if (m) return (+m[2]) * 10 + (+m[1]);
@@ -279,7 +280,7 @@ export default function App() {
   };
 
   const workstreams = ["All", ...Array.from(new Set(projects.map((p) => p.workstream)))];
-  const views = [["board", "Board"], ["matrix", "Priority matrix"], ["sequence", "Sequence"], ["resourcing", "Resourcing"], ["schedule", "Master Gantt"]];
+  const views = [["board", "Board"], ["matrix", "Priority matrix"], ["sequence", "Sequence"], ["resourcing", "Resourcing"], ["schedule", "Timeline"]];
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.ink, fontFamily: T.body }}>
@@ -693,6 +694,7 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
   const unscheduled = allDeliv.filter((d) => !schedNames.has(normDel(d.text)));
   const unmatched = (p.schedule || []).filter((t) => !delSet.has(normDel(t.deliverable)));
   const applyTimeline = (tasks) => { onUpdate({ schedule: tasks }); setShowImport(false); setGanttMsg(`Loaded ${tasks.length} deliverable${tasks.length === 1 ? "" : "s"} into the timeline.`); };
+  const exportProjectTimeline = () => { const blob = new Blob([timelineToCsv([p])], { type: "text/csv;charset=utf-8;" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${p.code}-timeline.csv`; a.click(); URL.revokeObjectURL(url); };
 
   return (
     <>
@@ -797,7 +799,10 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
         <div style={{ padding: "10px 26px 0" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
             <SectionTitle>Timeline — deliverables × owner</SectionTitle>
-            {unlocked && <button onClick={() => setShowImport(true)} style={{ ...btnGhost, fontSize: 12 }}>↑ Import timeline CSV</button>}
+            <div style={{ display: "flex", gap: 6 }}>
+              {(p.schedule || []).length > 0 && <button onClick={exportProjectTimeline} style={{ ...btnGhost, fontSize: 12 }}>↓ Export</button>}
+              {unlocked && <button onClick={() => setShowImport(true)} style={{ ...btnGhost, fontSize: 12 }}>↑ Import CSV</button>}
+            </div>
           </div>
           {ganttMsg && <div style={{ fontSize: 12, color: ganttMsg.startsWith("Loaded") ? "#0E8A74" : "#A33D3D", marginBottom: 8 }}>{ganttMsg}</div>}
           {ganttTasks.length ? (
@@ -813,6 +818,12 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
             <div style={{ background: T.paper, border: `1px dashed ${T.hairline}`, borderRadius: 10, padding: "16px 18px", fontSize: 12.5, color: T.inkSoft, lineHeight: 1.55 }}>
               No timeline yet. {unlocked ? <>Import a CSV with one row per deliverable — columns <code style={codeChip}>deliverable, owner, start, weeks</code> (optional <code style={codeChip}>effort</code>), <code style={codeChip}>start</code> like <code style={codeChip}>Q3 2026 W2</code>.</> : "Unlock editing to import a timeline."}
               {(committed.length + stretch.length) > 0 && <div style={{ marginTop: 8 }}><strong style={{ color: T.ink }}>Deliverables to schedule:</strong> {[...committed, ...stretch].map((d) => d.text).join(" · ")}</div>}
+            </div>
+          )}
+          {unlocked && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ marginBottom: 8 }}><SectionTitle>Edit timeline</SectionTitle> <span style={{ fontSize: 11.5, color: T.inkSoft }}>— pick a deliverable and a roster owner; set the quarter, start week, duration, and effort.</span></div>
+              <TimelineEditor items={p.schedule || []} deliverables={allDeliv} org={org} onCommit={(v) => onUpdate({ schedule: v })} />
             </div>
           )}
         </div>
@@ -1033,6 +1044,12 @@ function rosterToCsv(org) {
   allResources(org).forEach((r) => { lines.push([r.group, r.label, r.parent || "", r.lead || "", r.pm || ""].map(csvCell).join(",")); });
   return lines.join("\n");
 }
+function timelineToCsv(projects) {
+  const cols = ["projectCode", "deliverable", "owner", "start", "weeks", "effort"];
+  const lines = [cols.join(",")];
+  projects.forEach((p) => (p.schedule || []).forEach((t) => { lines.push([p.code, t.deliverable, t.owner || "", t.start || "", t.weeks || "", t.effort || "M"].map(csvCell).join(",")); }));
+  return lines.join("\n");
+}
 
 /* ---------- build-plan (deliverable scheduling) ---------- */
 const DEFAULT_WEEKLY_CAP = 3;
@@ -1108,6 +1125,62 @@ function parseTasksCsv(text) {
   return { tasks, error: tasks.length ? "" : "No valid rows (need deliverable, start like 'Q3 2026 W2', and weeks)." };
 }
 
+/* manual timeline editor: one row per scheduled task; deliverable + owner are roster/deliverable-matched dropdowns */
+function TimelineEditor({ items, deliverables, org, onCommit }) {
+  const [list, setList] = useState(items);
+  useEffect(() => { setList(items); }, [items]);
+  const commit = (next) => { setList(next); onCommit(next); };
+  const upd = (i, patch) => commit(list.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const opts = allResources(org);
+  const delTexts = deliverables.map((d) => d.text);
+  const split = (s) => { const m = (s || "").match(/(Q[1-4]\s*\d{4})\s*W\s*(\d+)/i); return m ? { q: m[1].replace(/\s+/g, " "), wk: Math.max(1, Math.min(13, +m[2])) } : { q: QUARTERS[0], wk: 1 }; };
+  const sel = { fontFamily: T.body, fontSize: 12, padding: "4px 6px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink };
+  const lbl = (s) => <span style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: "0.06em", color: T.inkSoft }}>{s}</span>;
+  const wkOpts = Array.from({ length: 13 }, (_, k) => k + 1);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {list.map((t, i) => {
+        const { q, wk } = split(t.start);
+        const cur = t.owner || "";
+        const mo = opts.find((o) => normName(o.label) === normName(cur) || normName(o.lead) === normName(cur));
+        const delKnown = delTexts.some((x) => normDel(x) === normDel(t.deliverable));
+        return (
+          <div key={i} style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap", borderBottom: `1px solid ${T.hairlineSoft}`, paddingBottom: 8 }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: 2, flex: "2 1 220px", minWidth: 170 }}>{lbl("DELIVERABLE")}
+              <select value={delKnown ? t.deliverable : "__cur__"} onChange={(e) => { if (e.target.value !== "__cur__") upd(i, { deliverable: e.target.value }); }} style={sel}>
+                {!delKnown && <option value="__cur__">{t.deliverable ? `${t.deliverable} — not a deliverable` : "(choose a deliverable)"}</option>}
+                {delTexts.map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 2, flex: "1 1 170px", minWidth: 140 }}>{lbl("OWNER")}
+              <select value={mo ? mo.label : (cur ? "__cur__" : "")} onChange={(e) => { const v = e.target.value; if (v === "__custom__") { const c = window.prompt("Owner (team or person):", cur); if (c != null) upd(i, { owner: c.trim() }); } else if (v !== "__cur__") upd(i, { owner: v }); }} style={sel}>
+                {!mo && cur && <option value="__cur__">{cur} (off-roster)</option>}
+                {!cur && <option value="" disabled>Select…</option>}
+                {opts.map((o) => <option key={o.group + o.label} value={o.label}>{o.group} · {o.label}{o.lead ? ` · ${o.lead}` : ""}</option>)}
+                <option value="__custom__">+ Custom…</option>
+              </select>
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>{lbl("QUARTER")}
+              <select value={q} onChange={(e) => upd(i, { start: `${e.target.value} W${wk}` })} style={sel}>{QUARTERS.map((x) => <option key={x} value={x}>{x}</option>)}</select>
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>{lbl("WEEK")}
+              <select value={wk} onChange={(e) => upd(i, { start: `${q} W${e.target.value}` })} style={sel}>{wkOpts.map((w) => <option key={w} value={w}>W{w}</option>)}</select>
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>{lbl("WEEKS")}
+              <select value={Math.max(1, Number(t.weeks) || 1)} onChange={(e) => upd(i, { weeks: Number(e.target.value) })} style={sel}>{wkOpts.map((w) => <option key={w} value={w}>{w}</option>)}</select>
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>{lbl("EFFORT")}
+              <select value={t.effort || "M"} onChange={(e) => upd(i, { effort: e.target.value })} style={sel}>{EFFORTS.map((x) => <option key={x} value={x}>{x}</option>)}</select>
+            </label>
+            <button onClick={() => commit(list.filter((_, j) => j !== i))} style={{ ...xBtn, marginBottom: 5 }} aria-label="Remove">✕</button>
+          </div>
+        );
+      })}
+      <button onClick={() => commit([...list, { deliverable: delTexts[0] || "", owner: "", start: `${QUARTERS[0]} W1`, weeks: 1, effort: "M" }])} style={addBtn}>+ Add timeline row</button>
+    </div>
+  );
+}
+
 /* shared weekly Gantt: groups = [{ key, label, color, tasks:[projectTasks-shape] }] */
 function GanttGrid({ groups, onOpen, labelHeader = "Deliverable" }) {
   const all = groups.flatMap((g) => g.tasks);
@@ -1159,6 +1232,12 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
     const a = document.createElement("a"); a.href = url; a.download = "revops-build-plan.csv"; a.click();
     URL.revokeObjectURL(url);
   };
+  const exportTimeline = () => {
+    const blob = new Blob([timelineToCsv(projects)], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "revops-timeline.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
   const onFile = (e) => {
     const f = e.target.files[0]; if (!f) return;
     const rd = new FileReader();
@@ -1177,7 +1256,8 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
   const controls = (
     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       {groups.length > 0 && <button onClick={() => { const next = {}; groups.forEach((g) => { next[g.p.id] = !allOpen; }); setExpanded(next); }} style={btnGhost}>{allOpen ? "Collapse all" : "Expand all"}</button>}
-      <button onClick={exportPlan} disabled={!projects.length} style={btnGhost}>↓ Export build plan</button>
+      <button onClick={exportTimeline} disabled={!groups.length} style={{ ...btnGhost, opacity: groups.length ? 1 : 0.5 }}>↓ Export timeline</button>
+      <button onClick={exportPlan} disabled={!projects.length} style={btnGhost} title="Blank scaffold: one row per deliverable to fill in">↓ Export build-plan scaffold</button>
       {unlocked && <label style={{ ...btnGhost, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>↑ Import (all projects)<input type="file" accept=".csv,text/csv" onChange={onFile} style={{ display: "none" }} /></label>}
       {busy && <span style={{ fontSize: 12, color: T.inkSoft }}>Importing…</span>}
       {msg && <span style={{ fontSize: 12, color: msg.startsWith("Imported") ? "#0E8A74" : "#A33D3D" }}>{msg}</span>}
@@ -1196,7 +1276,7 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
-        <div><h2 style={{ ...h2Style, marginBottom: 2 }}>Master Gantt</h2><p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>One overall bar per project across the timeline. Click a project (its row or bar) to break it out into deliverables.</p></div>
+        <div><h2 style={{ ...h2Style, marginBottom: 2 }}>Timeline</h2><p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>One overall bar per project across the timeline. Click a project (its row or bar) to break it out into deliverables.</p></div>
         {controls}
       </div>
       {groups.length ? (

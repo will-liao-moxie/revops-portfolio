@@ -160,32 +160,28 @@ title,workstream,effort,impact,target,dri,stakeholder,problem,solution,success,d
 
 ---
 
-## Scheduling (build plan) — optional second pass
+## App exports you can expect
 
-After projects are on the board, the **Schedule** tab exports a **build plan** CSV (one row per
-deliverable) for sequencing deliverables into weeks. Columns:
-`projectCode, deliverable, stretch, workstream, quarter, projectEffort, candidateOwners, dependsOn, owner, start, weeks, effort`.
+The user can hand you CSVs exported straight from the app — treat them as ground truth and match
+their exact column shapes so anything you produce pastes/imports cleanly:
 
-Pre-filled: everything except `owner / start / weeks / effort` (those are the scheduling decisions).
-To sequence:
-- `owner` — pick one person from `candidateOwners` (leads of the project's assigned teams). One row = one person; **duplicate the row** if a deliverable needs more than one person.
-- `start` — `Q# YYYY W#` (e.g. `Q3 2026 W2`); a quarter = 13 weeks.
-- `weeks` — duration in weeks.
-- `effort` — XS–XL for that person's slice of the deliverable.
+- **Project list** — header **Export CSV**. Every project with full detail, one row each:
+  `code, title, workstream, effort, impact, target, dri, stakeholder, problem, solution, success, deliverables, team, dependsOn, openItems`.
+  Use it to avoid duplicates, reuse exact workstream + team names, reference dependencies by `code`, and calibrate effort.
+- **Resourcing roster** — Resourcing tab → **Export roster**: `group, team, parent, lead, pm`. The
+  authoritative list of staffable teams/people; every `owner` and `team` name must come from here.
+- **Timeline plan** — Timeline tab → **Export timeline** (all projects) or a project doc → **Export**
+  (one project): `projectCode, deliverable, owner, start, weeks, effort`. The current per-deliverable
+  schedule; edit and re-import to adjust the Gantt.
+- **Build-plan scaffold** — Timeline tab → **Export build-plan scaffold**: one row per deliverable with
+  `candidateOwners` pre-filled and `owner/start/weeks/effort` blank — a convenient starting point for sequencing.
 
-Sequencing rules: respect `dependsOn` (a dependent's deliverables start after its prerequisite's),
-keep work inside the project's `quarter` window, and **prioritize delivery** — let per-person weekly
-load exceed capacity where needed and surface those as bottlenecks rather than delaying delivery.
-The app re-imports the filled CSV and renders a per-person week Gantt with capacity heat.
-
----
-
-## Project Gantt payload (per-project timeline)
+## Timeline / Gantt payload (per-project)
 
 The Gantt is the **next level of resourcing** — every project **deliverable** placed on a weekly
 timeline with a clear owner and effort. Each project doc renders its deliverables as a weekly Gantt
 (owner as the subtitle), they feed the Resourcing views (owner + effort + the quarter from `start`),
-and they roll up into the app's **Master Gantt**. To populate a
+and they roll up into the app's **Timeline** view. To populate a
 project's timeline, generate a CSV and the user imports it from that project's doc (**Import
 timeline CSV**).
 
@@ -202,9 +198,9 @@ timeline CSV**).
 Rules:
 - Keep every deliverable inside the project's `target` quarter window unless it legitimately spans.
 - Order/space deliverables so prerequisites finish before dependents start.
-- A `projectCode` column is allowed but ignored on per-project import (the file is assumed to be
-  for the open project). For the **Master Gantt** bulk import, include `projectCode` so rows map to
-  the right projects (this is the same as the build-plan export: `owner, start, weeks` filled in).
+- A `projectCode` column is allowed but ignored on per-project import (the file is assumed to be for
+  the open project). For the **Timeline** tab's bulk import, include `projectCode` so rows map to the
+  right projects — same shape as the **Export timeline** CSV.
 
 **Example (one project):**
 ```csv
