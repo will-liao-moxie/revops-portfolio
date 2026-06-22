@@ -182,14 +182,18 @@ The app re-imports the filled CSV and renders a per-person week Gantt with capac
 
 ## Project Gantt payload (per-project timeline)
 
-Each project doc has a **Timeline** that renders its deliverables as a weekly Gantt (one bar per
-row, owner as the subtitle), and they roll up into the app's **Master Gantt**. To populate a
+The Gantt is the **next level of resourcing** — every project **deliverable** placed on a weekly
+timeline with a clear owner and effort. Each project doc renders its deliverables as a weekly Gantt
+(owner as the subtitle), they feed the Resourcing views (owner + effort + the quarter from `start`),
+and they roll up into the app's **Master Gantt**. To populate a
 project's timeline, generate a CSV and the user imports it from that project's doc (**Import
 timeline CSV**).
 
 **Columns:** `deliverable, owner, start, weeks` (optional `effort` XS–XL)
-- `deliverable` — the bar label (the thing being built). One row per bar; duplicate the
-  deliverable across rows if distinct chunks run at different times.
+- `deliverable` — **must exactly match one of the project's deliverables** (the rows you wrote in
+  the project's `deliverables`). The Gantt is the deliverable-level resourcing layer, so write **one
+  row per deliverable**. Rows whose text doesn't match a deliverable are flagged on import and shown
+  as extra rows. (Generate the timeline from the same deliverables you authored in the project doc.)
 - `owner` — **must be a roster team or its lead** (e.g. `Business Systems`, or `Empty Cup Digital` for HubSpot). The owner **drives that team's load in the Resourcing views** — when a project has a timeline, its scheduled tasks (owner + effort + the quarter from `start`) are the source of truth for allocation, replacing the project's `team` roles. Combine up to two owners with ` · `.
 - `effort` — optional XS–XL; sizes the owner's load for that task in Resourcing (defaults to M).
 - `start` — `Q# YYYY W#`, where W1–W13 are the weeks within that quarter (e.g. `Q3 2026 W2`).

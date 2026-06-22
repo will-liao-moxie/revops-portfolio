@@ -153,6 +153,7 @@ async function apiWrite(path, method, payload) {
 /* A team is allocated to a project purely when the project names that team
    (or its lead) in its Team & resourcing list. */
 function normName(s) { return (s || "").toLowerCase().trim().replace(/\s+/g, " ").replace(/ team$/, ""); }
+function normDel(s) { return (s || "").toLowerCase().trim().replace(/\s+/g, " "); }
 function resourceNames(resource) { return new Set([normName(resource.label), normName(resource.lead)].filter(Boolean)); }
 function matchesResource(resource, who) { return resourceNames(resource).has(normName(who)); }
 function roleEffort(r) { return EFFORT_POINTS[r && r.effort] || EFFORT_POINTS.M; }
@@ -686,11 +687,16 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
   const [ganttMsg, setGanttMsg] = useState("");
   const [showImport, setShowImport] = useState(false);
   const ganttTasks = projectTasks(p);
+  const allDeliv = [...committed, ...stretch];
+  const delSet = new Set(allDeliv.map((d) => normDel(d.text)));
+  const schedNames = new Set((p.schedule || []).map((t) => normDel(t.deliverable)));
+  const unscheduled = allDeliv.filter((d) => !schedNames.has(normDel(d.text)));
+  const unmatched = (p.schedule || []).filter((t) => !delSet.has(normDel(t.deliverable)));
   const applyTimeline = (tasks) => { onUpdate({ schedule: tasks }); setShowImport(false); setGanttMsg(`Loaded ${tasks.length} deliverable${tasks.length === 1 ? "" : "s"} into the timeline.`); };
 
   return (
     <>
-    {showImport && <TimelineImportModal heading={`Import timeline — ${p.code}`} onClose={() => setShowImport(false)} onApply={applyTimeline} />}
+    {showImport && <TimelineImportModal heading={`Import timeline — ${p.code}`} deliverables={allDeliv} onClose={() => setShowImport(false)} onApply={applyTimeline} />}
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
       <div className="proj-drawer" onClick={(e) => e.stopPropagation()} style={{ height: "100%", background: T.bg, overflowY: "auto", boxShadow: "-12px 0 40px rgba(28,37,33,.18)", fontFamily: T.body }}>
         <div style={{ padding: "22px 26px 18px", background: T.surface, borderBottom: `1px solid ${T.hairline}`, position: "sticky", top: 0, zIndex: 2 }}>
@@ -794,9 +800,21 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
             {unlocked && <button onClick={() => setShowImport(true)} style={{ ...btnGhost, fontSize: 12 }}>↑ Import timeline CSV</button>}
           </div>
           {ganttMsg && <div style={{ fontSize: 12, color: ganttMsg.startsWith("Loaded") ? "#0E8A74" : "#A33D3D", marginBottom: 8 }}>{ganttMsg}</div>}
-          {ganttTasks.length
-            ? <div style={{ border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 10 }}><GanttGrid groups={[{ key: p.id, label: "", color: ws.color, tasks: ganttTasks }]} labelHeader="Deliverable" /></div>
-            : <div style={{ background: T.paper, border: `1px dashed ${T.hairline}`, borderRadius: 10, padding: "16px 18px", fontSize: 12.5, color: T.inkSoft, lineHeight: 1.55 }}>No timeline yet. {unlocked ? <>Import a CSV with columns <code style={codeChip}>deliverable, owner, start, weeks</code> — <code style={codeChip}>start</code> like <code style={codeChip}>Q3 2026 W2</code>.</> : "Unlock editing to import a timeline."}</div>}
+          {ganttTasks.length ? (
+            <>
+              <div style={{ border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 10 }}><GanttGrid groups={[{ key: p.id, label: "", color: ws.color, tasks: ganttTasks }]} labelHeader="Deliverable" /></div>
+              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5, fontSize: 12 }}>
+                <span style={{ color: T.inkSoft }}><strong style={{ color: T.ink }}>{committed.length + stretch.length - unscheduled.length}/{committed.length + stretch.length}</strong> deliverables scheduled</span>
+                {unscheduled.length > 0 && <span style={{ color: T.inkSoft }}><span style={{ color: "#9A6A12", fontWeight: 600 }}>Unscheduled:</span> {unscheduled.map((d) => d.text).join(" · ")}</span>}
+                {unmatched.length > 0 && <span style={{ color: "#A33D3D" }}><span style={{ fontWeight: 600 }}>⚠ Not in this project's deliverables:</span> {unmatched.map((t) => t.deliverable).join(" · ")}</span>}
+              </div>
+            </>
+          ) : (
+            <div style={{ background: T.paper, border: `1px dashed ${T.hairline}`, borderRadius: 10, padding: "16px 18px", fontSize: 12.5, color: T.inkSoft, lineHeight: 1.55 }}>
+              No timeline yet. {unlocked ? <>Import a CSV with one row per deliverable — columns <code style={codeChip}>deliverable, owner, start, weeks</code> (optional <code style={codeChip}>effort</code>), <code style={codeChip}>start</code> like <code style={codeChip}>Q3 2026 W2</code>.</> : "Unlock editing to import a timeline."}
+              {(committed.length + stretch.length) > 0 && <div style={{ marginTop: 8 }}><strong style={{ color: T.ink }}>Deliverables to schedule:</strong> {[...committed, ...stretch].map((d) => d.text).join(" · ")}</div>}
+            </div>
+          )}
         </div>
 
         {unlocked && <div style={{ padding: "12px 26px 32px" }}><button onClick={onRemove} style={{ fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "9px 14px", borderRadius: 8, background: "none", border: "1px solid #D9A0A0", color: "#A33D3D" }}>Remove project</button></div>}
@@ -1233,10 +1251,12 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
 }
 
 /* ---------- TIMELINE IMPORT MODAL (paste or file) ---------- */
-function TimelineImportModal({ heading, onClose, onApply }) {
+function TimelineImportModal({ heading, deliverables, onClose, onApply }) {
   const [text, setText] = useState("");
   const [err, setErr] = useState("");
   const parsed = useMemo(() => parseTasksCsv(text), [text]);
+  const delSet = useMemo(() => new Set((deliverables || []).map((d) => normDel(d.text))), [deliverables]);
+  const unmatched = parsed.tasks.filter((t) => !delSet.has(normDel(t.deliverable)));
   const onFile = (e) => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { setText(String(rd.result || "")); setErr(""); }; rd.readAsText(f); e.target.value = ""; };
   const apply = () => { if (!parsed.tasks.length) { setErr(parsed.error || "Nothing to import."); return; } onApply(parsed.tasks); };
   const field = { fontFamily: T.body, fontSize: 13, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, width: "100%" };
@@ -1250,7 +1270,8 @@ function TimelineImportModal({ heading, onClose, onApply }) {
         <input type="file" accept=".csv,text/csv" onChange={onFile} style={{ fontSize: 12.5, marginBottom: 10 }} />
         <label style={lbl}>OR PASTE CSV</label>
         <textarea value={text} onChange={(e) => { setText(e.target.value); setErr(""); }} rows={8} placeholder={"deliverable,owner,start,weeks\nCreate + populate field,Business Systems · HubSpot,Q3 2026 W1,1"} style={{ ...field, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, resize: "vertical" }} />
-        <div style={{ fontSize: 12.5, color: parsed.error ? "#A33D3D" : T.inkSoft, margin: "8px 0 0" }}>{text.trim() ? (parsed.error || `${parsed.tasks.length} deliverable${parsed.tasks.length === 1 ? "" : "s"} ready.`) : "Waiting for CSV…"}</div>
+        <div style={{ fontSize: 12.5, color: parsed.error ? "#A33D3D" : T.inkSoft, margin: "8px 0 0" }}>{text.trim() ? (parsed.error || `${parsed.tasks.length} row${parsed.tasks.length === 1 ? "" : "s"} ready — ${parsed.tasks.length - unmatched.length} match this project's deliverables.`) : "Waiting for CSV…"}</div>
+        {unmatched.length > 0 && <div style={{ fontSize: 12, color: "#9A6A12", margin: "6px 0 0" }}>⚠ {unmatched.length} row{unmatched.length === 1 ? "" : "s"} don't match a deliverable and will show as extra rows: {unmatched.slice(0, 4).map((t) => t.deliverable).join(" · ")}{unmatched.length > 4 ? "…" : ""}</div>}
         {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "8px 0 0" }}>{err}</p>}
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           <button onClick={apply} disabled={!parsed.tasks.length} style={{ ...btnSolid, opacity: parsed.tasks.length ? 1 : 0.5 }}>Import {parsed.tasks.length || ""} deliverable{parsed.tasks.length === 1 ? "" : "s"}</button>
