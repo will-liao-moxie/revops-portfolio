@@ -183,6 +183,9 @@ function projectAssignments(p) {
 function resourceProjects(resource, projects) { return projects.filter((p) => projectAssignments(p).some((a) => matchesResource(resource, a.owner))); }
 function resourceUnitsOn(resource, p) { return projectAssignments(p).filter((a) => matchesResource(resource, a.owner)).reduce((s, a) => s + a.pts, 0); }
 function projectLoad(p) { return EFFORT_POINTS[p.effort] || EFFORT_POINTS.M; }
+function codeNum(p) { const m = (p.code || "").match(/(\d+)/); return m ? Number(m[1]) : 9999; }
+// default ordering: by category (workstream) A→Z, then by the numeric part of the project code
+function byCategoryThenNumber(a, b) { return (a.workstream || "").localeCompare(b.workstream || "") || codeNum(a) - codeNum(b) || (a.code || "").localeCompare(b.code || ""); }
 function resolveResource(org, who) { const n = normName(who); return allResources(org).find((r) => normName(r.label) === n || normName(r.lead) === n) || null; }
 function resourcePath(org, who) { const r = resolveResource(org, who); return r ? [r.group, r.label, r.lead].filter(Boolean).join(" · ") : who; }
 // like resourcePath, but appends "· PM <name>" when the resource has a project manager (used in the timeline)
@@ -286,7 +289,7 @@ export default function App() {
 
   const byId = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p])), [projects]);
   const allWorkstreams = useMemo(() => Array.from(new Set([...Object.keys(WS).filter((w) => w !== "Other"), ...projects.map((p) => p.workstream).filter(Boolean)])), [projects]);
-  const visible = wsFilter === "All" ? projects : projects.filter((p) => p.workstream === wsFilter);
+  const visible = (wsFilter === "All" ? projects : projects.filter((p) => p.workstream === wsFilter)).slice().sort(byCategoryThenNumber);
   const selected = selectedId ? byId[selectedId] : null;
 
   const updateProject = async (id, patch) => {
