@@ -570,7 +570,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
               {mode === "project"
                 ? projects.map((p) => { const ws = wsMeta(p.workstream); return <th key={p.id} style={thStyle}><button onClick={() => onOpen(p.id)} title={p.title} style={{ background: "none", border: "none", color: ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em" }}>{p.code}</button></th>; })
                 : mode === "category"
-                  ? categories.map((c) => { const ws = wsMeta(c); return <th key={c} title={c} style={{ ...thStyle, color: ws.color, minWidth: 64 }}>{ws.code}</th>; })
+                  ? categories.map((c) => { const ws = wsMeta(c); return <th key={c} title={c} style={{ ...thStyle, color: ws.color, minWidth: 96, whiteSpace: "normal", lineHeight: 1.2 }}>{c}</th>; })
                   : quarters.map((q) => <th key={q} style={thStyle}>{q}</th>)}
             </tr>
           </thead>
