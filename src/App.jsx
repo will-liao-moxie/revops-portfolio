@@ -813,7 +813,7 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
           {ganttMsg && <div style={{ fontSize: 12, color: ganttMsg.startsWith("Loaded") ? "#0E8A74" : "#A33D3D", marginBottom: 8 }}>{ganttMsg}</div>}
           {ganttTasks.length ? (
             <>
-              <div style={{ border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 10 }}><GanttGrid groups={[{ key: p.id, label: "", color: ws.color, tasks: ganttTasks }]} labelHeader="Deliverable" /></div>
+              <div style={{ border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 10 }}><GanttGrid groups={[{ key: p.id, label: "", color: ws.color, tasks: ganttTasks }]} org={org} labelHeader="Deliverable" /></div>
               <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5, fontSize: 12 }}>
                 <span style={{ color: T.inkSoft }}><strong style={{ color: T.ink }}>{committed.length + stretch.length - unscheduled.length}/{committed.length + stretch.length}</strong> deliverables scheduled</span>
                 {unscheduled.length > 0 && <span style={{ color: T.inkSoft }}><span style={{ color: "#9A6A12", fontWeight: 600 }}>Unscheduled:</span> {unscheduled.map((d) => d.text).join(" · ")}</span>}
@@ -1071,6 +1071,12 @@ function weekLabel(idx) {
   const q = (qOrd % 4) + 1, year = 2025 + Math.floor(qOrd / 4);
   return { q: `Q${q} ${year}`, wk };
 }
+const Q_MONTH = { 1: 0, 2: 3, 3: 6, 4: 9 };
+function weekDate(idx) {
+  const { q, wk } = weekLabel(idx); const m = q.match(/Q([1-4])\s*(\d{4})/); if (!m) return "";
+  const d = new Date(+m[2], Q_MONTH[+m[1]], 1 + (wk - 1) * 7);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
 function buildPlanToCsv(projects, org) {
   const cols = ["projectCode", "deliverable", "stretch", "workstream", "quarter", "projectEffort", "candidateOwners", "dependsOn", "owner", "start", "weeks", "effort"];
   const byId = Object.fromEntries(projects.map((p) => [p.id, p]));
@@ -1110,7 +1116,7 @@ function projectTasks(p) {
   const ws = wsMeta(p.workstream);
   return (p.schedule || []).map((t, i) => {
     const idx = parseStart(t.start); if (idx == null) return null;
-    return { key: p.id + "-" + i, projectId: p.id, code: p.code, deliverable: t.deliverable, owner: t.owner || "", ws, idx, weeks: Math.max(1, Number(t.weeks) || 1) };
+    return { key: p.id + "-" + i, projectId: p.id, code: p.code, deliverable: t.deliverable, owner: t.owner || "", effort: t.effort || "M", ws, idx, weeks: Math.max(1, Number(t.weeks) || 1) };
   }).filter(Boolean);
 }
 /* lenient per-project task CSV: deliverable, owner, start, weeks (projectCode optional/ignored) */
@@ -1187,40 +1193,47 @@ function TimelineEditor({ items, deliverables, org, onCommit }) {
   );
 }
 
-/* shared weekly Gantt: groups = [{ key, label, color, tasks:[projectTasks-shape] }] */
-function GanttGrid({ groups, onOpen, labelHeader = "Deliverable" }) {
+/* shared weekly Gantt: groups = [{ key, label, color, tasks:[projectTasks-shape] }].
+   Columns flex to fill width (minmax) so a short timeline doesn't leave dead space. */
+function GanttGrid({ groups, org, onOpen, labelHeader = "Deliverable" }) {
   const all = groups.flatMap((g) => g.tasks);
   if (!all.length) return null;
   const minIdx = Math.min(...all.map((t) => t.idx)), maxIdx = Math.max(...all.map((t) => t.idx + t.weeks - 1));
   const nWeeks = maxIdx - minIdx + 1;
   const weeks = Array.from({ length: nWeeks }, (_, i) => minIdx + i);
-  const COL = 40, LABEL = 250;
-  const grid = { display: "grid", gridTemplateColumns: `${LABEL}px repeat(${nWeeks}, ${COL}px)` };
+  const MINCOL = 46, LABEL = 260;
+  const grid = { display: "grid", gridTemplateColumns: `${LABEL}px repeat(${nWeeks}, minmax(${MINCOL}px, 1fr))` };
   const qSpans = [];
   weeks.forEach((w, i) => { const q = weekLabel(w).q; const last = qSpans[qSpans.length - 1]; if (last && last.q === q) last.len++; else qSpans.push({ q, start: i, len: 1 }); });
   return (
     <div style={{ overflowX: "auto" }}>
-      <div style={{ minWidth: LABEL + nWeeks * COL }}>
+      <div style={{ minWidth: LABEL + nWeeks * MINCOL }}>
         <div style={grid}>
           <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1 }} />
           {qSpans.map((s) => <div key={s.q} style={{ gridColumn: `${2 + s.start} / span ${s.len}`, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.06em", color: T.inkSoft, borderLeft: `1px solid ${T.hairline}`, padding: "2px 0 2px 6px" }}>{s.q.toUpperCase()}</div>)}
         </div>
         <div style={{ ...grid, borderBottom: `1px solid ${T.hairline}` }}>
           <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, fontFamily: T.mono, fontSize: 10, color: T.inkSoft, padding: "2px 8px" }}>{labelHeader.toUpperCase()}</div>
-          {weeks.map((w, i) => <div key={i} style={{ textAlign: "center", fontFamily: T.mono, fontSize: 9.5, color: T.inkSoft, borderLeft: weekLabel(w).wk === 1 ? `1px solid ${T.hairline}` : "none" }}>W{weekLabel(w).wk}</div>)}
+          {weeks.map((w, i) => <div key={i} style={{ textAlign: "center", padding: "2px 0", borderLeft: weekLabel(w).wk === 1 ? `1px solid ${T.hairline}` : "none" }}><div style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 600, color: T.ink }}>W{weekLabel(w).wk}</div><div style={{ fontFamily: T.mono, fontSize: 8.5, color: T.inkSoft }}>{weekDate(w)}</div></div>)}
         </div>
         {groups.map((g) => (
           <div key={g.key}>
             {g.label && <div style={{ ...grid }}><div style={{ gridColumn: "1 / -1", position: "sticky", left: 0, background: T.paper, padding: "8px 8px 4px", fontFamily: T.display, fontWeight: 700, fontSize: 13, color: g.color || T.ink, borderTop: `1px solid ${T.hairline}` }}>{g.label}</div></div>}
-            {g.tasks.map((t) => (
-              <div key={t.key} style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairlineSoft}` }}>
-                <button onClick={() => onOpen && onOpen(t.projectId)} style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, textAlign: "left", border: "none", padding: "7px 8px", fontFamily: T.body, cursor: onOpen ? "pointer" : "default", overflow: "hidden" }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, color: T.ink, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.deliverable}</div>
-                  {t.owner && <div style={{ fontSize: 11, color: t.ws.color, lineHeight: 1.2 }}>{t.owner}</div>}
-                </button>
-                <div title={`${t.deliverable}${t.owner ? " · " + t.owner : ""} · ${weekLabel(t.idx).q} W${weekLabel(t.idx).wk} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 20, background: t.ws.soft, border: `1px solid ${t.ws.color}`, borderLeft: `3px solid ${t.ws.color}`, borderRadius: 5, margin: "5px 2px" }} />
-              </div>
-            ))}
+            {g.tasks.map((t) => {
+              const ownerPath = t.owner ? resourcePath(org, t.owner) : "";
+              return (
+                <div key={t.key} style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairlineSoft}` }}>
+                  <button onClick={() => onOpen && onOpen(t.projectId)} style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, textAlign: "left", border: "none", padding: "7px 8px", fontFamily: T.body, cursor: onOpen ? "pointer" : "default", overflow: "hidden" }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 600, color: T.ink, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.deliverable}</span>
+                      <EffortChip effort={t.effort} ws={t.ws} />
+                    </div>
+                    {ownerPath && <div style={{ fontSize: 11, color: t.ws.color, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ownerPath}</div>}
+                  </button>
+                  <div title={`${t.deliverable}${ownerPath ? " · " + ownerPath : ""} · ${t.effort || "M"} · ${weekDate(t.idx)} → ${weekDate(t.idx + t.weeks - 1)} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 20, background: t.ws.soft, border: `1px solid ${t.ws.color}`, borderLeft: `3px solid ${t.ws.color}`, borderRadius: 5, margin: "5px 2px" }} />
+                </div>
+              );
+            })}
           </div>
         ))}
       </div>
@@ -1294,7 +1307,7 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
             </div>
             <div style={{ ...grid, borderBottom: `1px solid ${T.hairline}` }}>
               <div style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, fontFamily: T.mono, fontSize: 10, color: T.inkSoft, padding: "2px 8px" }}>PROJECT</div>
-              {weeks.map((w, i) => <div key={i} style={{ textAlign: "center", fontFamily: T.mono, fontSize: 9.5, color: T.inkSoft, borderLeft: weekLabel(w).wk === 1 ? `1px solid ${T.hairline}` : "none" }}>W{weekLabel(w).wk}</div>)}
+              {weeks.map((w, i) => <div key={i} style={{ textAlign: "center", padding: "2px 0", borderLeft: weekLabel(w).wk === 1 ? `1px solid ${T.hairline}` : "none" }}><div style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 600, color: T.ink }}>W{weekLabel(w).wk}</div><div style={{ fontFamily: T.mono, fontSize: 8.5, color: T.inkSoft }}>{weekDate(w)}</div></div>)}
             </div>
             {groups.map((g) => {
               const isOpen = !!expanded[g.p.id];
@@ -1309,15 +1322,21 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
                     </button>
                     <button onClick={() => toggle(g.p.id)} title={`${g.p.code} · ${g.tasks.length} deliverables · ${weekLabel(g.gMin).q} W${weekLabel(g.gMin).wk} → ${weekLabel(g.gMax).q} W${weekLabel(g.gMax).wk}`} style={{ gridColumn: `${2 + (g.gMin - minIdx)} / span ${g.gMax - g.gMin + 1}`, gridRow: 1, alignSelf: "center", height: 24, background: g.ws.soft, border: `1px solid ${g.ws.color}`, borderLeft: `3px solid ${g.ws.color}`, borderRadius: 6, color: g.ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "0 8px", textAlign: "left", overflow: "hidden", whiteSpace: "nowrap", cursor: "pointer", margin: "4px 2px" }}>{g.p.code}</button>
                   </div>
-                  {isOpen && g.tasks.map((t) => (
+                  {isOpen && g.tasks.map((t) => {
+                    const ownerPath = t.owner ? resourcePath(org, t.owner) : "";
+                    return (
                     <div key={t.key} style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairlineSoft}` }}>
                       <button onClick={() => onOpen(g.p.id)} style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, textAlign: "left", border: "none", padding: "6px 8px 6px 26px", cursor: "pointer", overflow: "hidden" }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.deliverable}</div>
-                        {t.owner && <div style={{ fontSize: 10.5, color: g.ws.color }}>{t.owner}</div>}
+                        <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.deliverable}</span>
+                          <EffortChip effort={t.effort} ws={g.ws} />
+                        </div>
+                        {ownerPath && <div style={{ fontSize: 10.5, color: g.ws.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ownerPath}</div>}
                       </button>
-                      <div title={`${t.deliverable}${t.owner ? " · " + t.owner : ""} · ${weekLabel(t.idx).q} W${weekLabel(t.idx).wk} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 16, background: g.ws.soft, border: `1px solid ${g.ws.color}`, borderLeft: `3px solid ${g.ws.color}`, borderRadius: 4, margin: "4px 2px" }} />
+                      <div title={`${t.deliverable}${ownerPath ? " · " + ownerPath : ""} · ${t.effort || "M"} · ${weekDate(t.idx)} → ${weekDate(t.idx + t.weeks - 1)} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 16, background: g.ws.soft, border: `1px solid ${g.ws.color}`, borderLeft: `3px solid ${g.ws.color}`, borderRadius: 4, margin: "4px 2px" }} />
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               );
             })}
