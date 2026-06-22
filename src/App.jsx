@@ -64,6 +64,20 @@ function nextCode(ws, projects, selfId) {
 const EFFORTS = ["XS", "S", "M", "L", "XL"];
 const EFFORT_POINTS = { XS: 1, S: 2, M: 3, L: 4, XL: 5 };
 const EFFORT_LABEL = { XS: "Extra-small", S: "Small", M: "Medium", L: "Large", XL: "Extra-large" };
+/* traffic-light scale: low effort = green, high effort = red */
+const EFFORT_COLOR = {
+  XS: { soft: "#E3F4E8", color: "#1E8A4C" },
+  S:  { soft: "#E9F4DC", color: "#5C8A23" },
+  M:  { soft: "#FBF1D6", color: "#B0860F" },
+  L:  { soft: "#FBE6D4", color: "#C5651C" },
+  XL: { soft: "#FADCDC", color: "#C13434" },
+};
+/* deliverable type: required (committed) vs optional (stretch) */
+const DELIV_TYPE = {
+  required: { color: "#1E8A4C", soft: "#E3F4E8", label: "Required" },
+  optional: { color: "#C28A12", soft: "#FBF1D6", label: "Optional (stretch)" },
+};
+const delivType = (stretch) => (stretch ? DELIV_TYPE.optional : DELIV_TYPE.required);
 const DEFAULT_CAP = 6;
 const TARGETS = ["TBD", "Q3 2026", "Q4 2026", "Q1 2027", "Q2 2027", "Q3 2027", "Q4 2027"];
 const QUARTERS = TARGETS.filter((t) => t !== "TBD");
@@ -188,9 +202,25 @@ function Chip({ children, bg, fg }) { return <span style={{ fontFamily: T.body, 
 function ScoreDots({ value, color }) {
   return <span style={{ display: "inline-flex", gap: 3, alignItems: "center" }}>{[1, 2, 3, 4, 5].map((n) => <span key={n} style={{ width: 7, height: 7, borderRadius: 999, background: n <= value ? color : T.hairline }} />)}</span>;
 }
-function EffortChip({ effort, ws }) {
-  const e = effort || "M";
-  return <span title={`${EFFORT_LABEL[e]} · ${EFFORT_POINTS[e]}/5 work units`} style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 6, background: (ws && ws.soft) || T.hairlineSoft, color: (ws && ws.color) || T.inkSoft, letterSpacing: "0.04em" }}>{e}</span>;
+function EffortChip({ effort }) {
+  const e = effort || "M"; const c = EFFORT_COLOR[e] || EFFORT_COLOR.M;
+  return <span title={`${EFFORT_LABEL[e]} · ${EFFORT_POINTS[e]}/5 work units`} style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 6, background: c.soft, color: c.color, letterSpacing: "0.04em" }}>{e}</span>;
+}
+function GanttLegend() {
+  const dot = (c) => ({ width: 9, height: 9, borderRadius: 3, background: c, flexShrink: 0 });
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", alignItems: "center", fontFamily: T.body, fontSize: 11.5, color: T.inkSoft }}>
+      <span style={{ display: "inline-flex", gap: 12, alignItems: "center" }}>
+        <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: "0.06em" }}>DELIVERABLE</span>
+        <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><span style={dot(DELIV_TYPE.required.color)} />{DELIV_TYPE.required.label}</span>
+        <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><span style={dot(DELIV_TYPE.optional.color)} />{DELIV_TYPE.optional.label}</span>
+      </span>
+      <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+        <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: "0.06em" }}>EFFORT</span>
+        {EFFORTS.map((e) => <EffortChip key={e} effort={e} />)}
+      </span>
+    </div>
+  );
 }
 function initials(name) { return (name || "").split(/[\s·]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase(); }
 function Avatar({ name, color }) { return <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 999, background: (color || T.inkSoft) + "22", color: color || T.inkSoft, fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>{initials(name)}</span>; }
@@ -699,6 +729,8 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
   const schedNames = new Set((p.schedule || []).map((t) => normDel(t.deliverable)));
   const unscheduled = allDeliv.filter((d) => !schedNames.has(normDel(d.text)));
   const unmatched = (p.schedule || []).filter((t) => !delSet.has(normDel(t.deliverable)));
+  const allScheduledShown = ganttTasks.length > 0 && unscheduled.length === 0 && unmatched.length === 0;
+  const showBuilt = unlocked || !allScheduledShown;
   const applyTimeline = (tasks) => { onUpdate({ schedule: tasks }); setShowImport(false); setGanttMsg(`Loaded ${tasks.length} deliverable${tasks.length === 1 ? "" : "s"} into the timeline.`); };
   const exportProjectTimeline = () => { const blob = new Blob([timelineToCsv([p])], { type: "text/csv;charset=utf-8;" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${p.code}-timeline.csv`; a.click(); URL.revokeObjectURL(url); };
 
@@ -737,24 +769,18 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
             <AccentCard accent="#C0463E" icon="!" title="The problem">{unlocked ? <AreaEdit value={p.problem} onCommit={(v) => onUpdate({ problem: v })} /> : <p style={cardText}>{p.problem}</p>}</AccentCard>
             <AccentCard accent={ws.color} icon="→" title="The solution">{unlocked ? <AreaEdit value={p.solution} onCommit={(v) => onUpdate({ solution: v })} /> : <p style={cardText}>{p.solution}</p>}</AccentCard>
 
-            <Panel title={`What's being built${committed.length ? ` · ${committed.length}` : ""}`}>
-              {unlocked ? <DeliverableEditor items={p.deliverables || []} accent={ws.color} onCommit={(v) => onUpdate({ deliverables: v })} /> : (
-                <>
-                  <ul style={listReset}>{committed.map((d, i) => <li key={i} style={liRow}><span style={{ color: ws.color, fontWeight: 700, marginTop: 1 }}>✓</span><span>{d.text}</span></li>)}</ul>
-                  {stretch.length > 0 && (
-                    <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px dashed ${T.hairline}` }}>
-                      <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: "#9A6A12", marginBottom: 8 }}>STRETCH — IF TIME ALLOWS</div>
-                      <ul style={listReset}>{stretch.map((d, i) => <li key={i} style={{ ...liRow, color: T.inkSoft }}><span style={{ color: "#C9A24B", marginTop: 1 }}>○</span><span>{d.text}</span></li>)}</ul>
-                    </div>
-                  )}
-                </>
-              )}
-            </Panel>
-
             <div style={{ background: "#EDF6F0", border: "1px solid #C9E4D6", borderRadius: 12, padding: "14px 16px" }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}><span style={{ fontSize: 14 }}>🎯</span><SectionTitle>Definition of success</SectionTitle></div>
               {unlocked ? <AreaEdit value={p.success} onCommit={(v) => onUpdate({ success: v })} /> : <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: T.ink }}>{p.success}</p>}
             </div>
+
+            {((p.openItems || []).length > 0 || unlocked) && (
+              <div style={{ background: "#FFF8EC", border: "1px solid #EFDFBC", borderRadius: 12, padding: "12px 16px" }}>
+                <SectionTitle>Risks & assumptions</SectionTitle>
+                {unlocked ? <div style={{ marginTop: 8 }}><StringListEditor items={p.openItems || []} placeholder="Add a risk or assumption" onCommit={(v) => onUpdate({ openItems: v })} /></div>
+                  : <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: "#6E5612" }}>{p.openItems.map((o, i) => <li key={i}>{o}</li>)}</ul>}
+              </div>
+            )}
           </div>
 
           <aside style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
@@ -769,7 +795,7 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
                             <span style={{ fontWeight: 600 }}>{resourcePath(org, r.who)}</span>
-                            <EffortChip effort={r.effort} ws={ws} />
+                            <EffortChip effort={r.effort} />
                           </div>
                           {r.what && <div style={{ color: T.inkSoft, lineHeight: 1.45, marginTop: 2 }}>{r.what}</div>}
                         </div>
@@ -790,16 +816,27 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
                 )}
               </Panel>
             )}
-
-            {((p.openItems || []).length > 0 || unlocked) && (
-              <div style={{ background: "#FFF8EC", border: "1px solid #EFDFBC", borderRadius: 12, padding: "12px 16px" }}>
-                <SectionTitle>Risks & assumptions</SectionTitle>
-                {unlocked ? <div style={{ marginTop: 8 }}><StringListEditor items={p.openItems || []} placeholder="Add a risk or assumption" onCommit={(v) => onUpdate({ openItems: v })} /></div>
-                  : <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: "#6E5612" }}>{p.openItems.map((o, i) => <li key={i}>{o}</li>)}</ul>}
-              </div>
-            )}
           </aside>
         </div>
+
+        {/* What's being built — its own full-width section; hidden in view mode once the timeline already shows every deliverable */}
+        {showBuilt && (
+          <div style={{ padding: "10px 26px 0" }}>
+            <Panel title={`What's being built${committed.length ? ` · ${committed.length}` : ""}`}>
+              {unlocked ? <DeliverableEditor items={p.deliverables || []} accent={ws.color} onCommit={(v) => onUpdate({ deliverables: v })} /> : (
+                <>
+                  <ul style={listReset}>{committed.map((d, i) => <li key={i} style={liRow}><span style={{ color: DELIV_TYPE.required.color, fontWeight: 700, marginTop: 1 }}>✓</span><span>{d.text}</span></li>)}</ul>
+                  {stretch.length > 0 && (
+                    <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px dashed ${T.hairline}` }}>
+                      <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: DELIV_TYPE.optional.color, marginBottom: 8 }}>STRETCH — IF TIME ALLOWS</div>
+                      <ul style={listReset}>{stretch.map((d, i) => <li key={i} style={{ ...liRow, color: T.inkSoft }}><span style={{ color: DELIV_TYPE.optional.color, marginTop: 1 }}>○</span><span>{d.text}</span></li>)}</ul>
+                    </div>
+                  )}
+                </>
+              )}
+            </Panel>
+          </div>
+        )}
 
         {/* per-project Gantt: deliverables × owners across weeks */}
         <div style={{ padding: "10px 26px 0" }}>
@@ -813,6 +850,7 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
           {ganttMsg && <div style={{ fontSize: 12, color: ganttMsg.startsWith("Loaded") ? "#0E8A74" : "#A33D3D", marginBottom: 8 }}>{ganttMsg}</div>}
           {ganttTasks.length ? (
             <>
+              <div style={{ marginBottom: 8 }}><GanttLegend /></div>
               <div style={{ border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 10 }}><GanttGrid groups={[{ key: p.id, label: "", color: ws.color, tasks: ganttTasks }]} org={org} labelHeader="Deliverable" /></div>
               <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5, fontSize: 12 }}>
                 <span style={{ color: T.inkSoft }}><strong style={{ color: T.ink }}>{committed.length + stretch.length - unscheduled.length}/{committed.length + stretch.length}</strong> deliverables scheduled</span>
@@ -1114,9 +1152,10 @@ function csvToSchedule(text, projects) {
 /* tasks for a project's Gantt = its scheduled deliverables (start = "Q# YYYY W#", weeks = duration) */
 function projectTasks(p) {
   const ws = wsMeta(p.workstream);
+  const stretchSet = new Set((p.deliverables || []).filter((d) => d.stretch).map((d) => normDel(d.text)));
   return (p.schedule || []).map((t, i) => {
     const idx = parseStart(t.start); if (idx == null) return null;
-    return { key: p.id + "-" + i, projectId: p.id, code: p.code, deliverable: t.deliverable, owner: t.owner || "", effort: t.effort || "M", ws, idx, weeks: Math.max(1, Number(t.weeks) || 1) };
+    return { key: p.id + "-" + i, projectId: p.id, code: p.code, deliverable: t.deliverable, owner: t.owner || "", effort: t.effort || "M", stretch: stretchSet.has(normDel(t.deliverable)), ws, idx, weeks: Math.max(1, Number(t.weeks) || 1) };
   }).filter(Boolean);
 }
 /* lenient per-project task CSV: deliverable, owner, start, weeks (projectCode optional/ignored) */
@@ -1201,7 +1240,7 @@ function GanttGrid({ groups, org, onOpen, labelHeader = "Deliverable" }) {
   const minIdx = Math.min(...all.map((t) => t.idx)), maxIdx = Math.max(...all.map((t) => t.idx + t.weeks - 1));
   const nWeeks = maxIdx - minIdx + 1;
   const weeks = Array.from({ length: nWeeks }, (_, i) => minIdx + i);
-  const MINCOL = 46, LABEL = 260;
+  const MINCOL = 46, LABEL = 340;
   const grid = { display: "grid", gridTemplateColumns: `${LABEL}px repeat(${nWeeks}, minmax(${MINCOL}px, 1fr))` };
   const qSpans = [];
   weeks.forEach((w, i) => { const q = weekLabel(w).q; const last = qSpans[qSpans.length - 1]; if (last && last.q === q) last.len++; else qSpans.push({ q, start: i, len: 1 }); });
@@ -1221,14 +1260,16 @@ function GanttGrid({ groups, org, onOpen, labelHeader = "Deliverable" }) {
             {g.label && <div style={{ ...grid }}><div style={{ gridColumn: "1 / -1", position: "sticky", left: 0, background: T.paper, padding: "8px 8px 4px", fontFamily: T.display, fontWeight: 700, fontSize: 13, color: g.color || T.ink, borderTop: `1px solid ${T.hairline}` }}>{g.label}</div></div>}
             {g.tasks.map((t) => {
               const ownerPath = t.owner ? resourcePath(org, t.owner) : "";
+              const dt = delivType(t.stretch);
               return (
                 <div key={t.key} style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairlineSoft}` }}>
-                  <button onClick={() => onOpen && onOpen(t.projectId)} style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, textAlign: "left", border: "none", padding: "7px 8px", fontFamily: T.body, cursor: onOpen ? "pointer" : "default", overflow: "hidden" }}>
-                    <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
-                      <span style={{ fontSize: 12.5, fontWeight: 600, color: T.ink, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.deliverable}</span>
-                      <EffortChip effort={t.effort} ws={t.ws} />
+                  <button onClick={() => onOpen && onOpen(t.projectId)} title={dt.label} style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, textAlign: "left", border: "none", borderLeft: `4px solid ${dt.color}`, padding: "7px 8px 7px 9px", fontFamily: T.body, cursor: onOpen ? "pointer" : "default", overflow: "hidden" }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 3, background: dt.color, flexShrink: 0 }} />
+                      <span style={{ fontSize: 12.5, fontWeight: 600, color: T.ink, lineHeight: 1.3 }}>{t.deliverable}</span>
+                      <EffortChip effort={t.effort} />
                     </div>
-                    {ownerPath && <div style={{ fontSize: 11, color: t.ws.color, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ownerPath}</div>}
+                    {ownerPath && <div style={{ fontSize: 11, color: t.ws.color, lineHeight: 1.3, marginLeft: 14 }}>{ownerPath}</div>}
                   </button>
                   <div title={`${t.deliverable}${ownerPath ? " · " + ownerPath : ""} · ${t.effort || "M"} · ${weekDate(t.idx)} → ${weekDate(t.idx + t.weeks - 1)} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 20, background: t.ws.soft, border: `1px solid ${t.ws.color}`, borderLeft: `3px solid ${t.ws.color}`, borderRadius: 5, margin: "5px 2px" }} />
                 </div>
@@ -1287,7 +1328,7 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
   const minIdx = all.length ? Math.min(...all.map((t) => t.idx)) : 0, maxIdx = all.length ? Math.max(...all.map((t) => t.idx + t.weeks - 1)) : 0;
   const nWeeks = maxIdx - minIdx + 1;
   const weeks = Array.from({ length: nWeeks }, (_, i) => minIdx + i);
-  const COL = 40, LABEL = 260;
+  const COL = 40, LABEL = 380;
   const grid = { display: "grid", gridTemplateColumns: `${LABEL}px repeat(${nWeeks}, ${COL}px)` };
   const qSpans = [];
   weeks.forEach((w, i) => { const q = weekLabel(w).q; const last = qSpans[qSpans.length - 1]; if (last && last.q === q) last.len++; else qSpans.push({ q, start: i, len: 1 }); });
@@ -1298,6 +1339,7 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
         <div><h2 style={{ ...h2Style, marginBottom: 2 }}>Timeline</h2><p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>One overall bar per project across the timeline. Click a project (its row or bar) to break it out into deliverables.</p></div>
         {controls}
       </div>
+      {groups.length > 0 && <GanttLegend />}
       {groups.length ? (
         <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12, overflowX: "auto" }}>
           <div style={{ minWidth: LABEL + nWeeks * COL }}>
@@ -1324,14 +1366,16 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
                   </div>
                   {isOpen && g.tasks.map((t) => {
                     const ownerPath = t.owner ? resourcePath(org, t.owner) : "";
+                    const dt = delivType(t.stretch);
                     return (
                     <div key={t.key} style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairlineSoft}` }}>
-                      <button onClick={() => onOpen(g.p.id)} style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, textAlign: "left", border: "none", padding: "6px 8px 6px 26px", cursor: "pointer", overflow: "hidden" }}>
-                        <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.deliverable}</span>
-                          <EffortChip effort={t.effort} ws={g.ws} />
+                      <button onClick={() => onOpen(g.p.id)} title={dt.label} style={{ position: "sticky", left: 0, background: T.surface, zIndex: 1, textAlign: "left", border: "none", borderLeft: `4px solid ${dt.color}`, padding: "6px 8px 6px 22px", cursor: "pointer", overflow: "hidden" }}>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 3, background: dt.color, flexShrink: 0 }} />
+                          <span style={{ fontSize: 12, fontWeight: 600, color: T.ink, lineHeight: 1.3 }}>{t.deliverable}</span>
+                          <EffortChip effort={t.effort} />
                         </div>
-                        {ownerPath && <div style={{ fontSize: 10.5, color: g.ws.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ownerPath}</div>}
+                        {ownerPath && <div style={{ fontSize: 10.5, color: g.ws.color, lineHeight: 1.3, marginLeft: 14 }}>{ownerPath}</div>}
                       </button>
                       <div title={`${t.deliverable}${ownerPath ? " · " + ownerPath : ""} · ${t.effort || "M"} · ${weekDate(t.idx)} → ${weekDate(t.idx + t.weeks - 1)} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 16, background: g.ws.soft, border: `1px solid ${g.ws.color}`, borderLeft: `3px solid ${g.ws.color}`, borderRadius: 4, margin: "4px 2px" }} />
                     </div>
