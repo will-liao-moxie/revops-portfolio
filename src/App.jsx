@@ -305,9 +305,7 @@ export default function App() {
             <p style={{ margin: "8px 0 0", fontSize: 13.5, color: T.inkSoft, maxWidth: 560 }}>Scope, priority, sequencing, and resourcing for the RevOps project portfolio — one place.</p>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={exportCsv} disabled={!projects.length} title="Download the whole portfolio as CSV" style={{ ...btnGhost, opacity: projects.length ? 1 : 0.5 }}>↓ Export CSV</button>
             <button onClick={toggleLock} title={unlocked ? "Lock editing" : "Unlock editing"} style={btnGhost}>{unlocked ? "🔓 Editing" : "🔒 Locked"}</button>
-            {unlocked && <button onClick={() => setShowAdd(true)} style={btnSolid}>+ Add project</button>}
           </div>
         </div>
 
@@ -337,7 +335,15 @@ export default function App() {
               <p style={{ margin: "6px 0 12px", fontSize: 13, color: T.inkSoft, lineHeight: 1.5 }}>{loadError}</p>
               <button onClick={refresh} style={btnSolid}>Try again</button>
             </div>
-          ) : view === "board" ? <Board projects={visible} onOpen={setSelectedId} />
+          ) : view === "board" ? (
+            <>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 14 }}>
+                <button onClick={exportCsv} disabled={!projects.length} title="Download the whole portfolio as CSV" style={{ ...btnGhost, opacity: projects.length ? 1 : 0.5 }}>↓ Export CSV</button>
+                {unlocked && <button onClick={() => setShowAdd(true)} style={btnSolid}>+ Add project</button>}
+              </div>
+              <Board projects={visible} onOpen={setSelectedId} />
+            </>
+          )
             : view === "matrix" ? <Matrix projects={visible} onOpen={setSelectedId} />
               : view === "sequence" ? <Sequence projects={visible} byId={byId} onOpen={setSelectedId} />
                 : view === "resourcing" ? <Resourcing projects={projects} org={org} capacities={capacities} unlocked={unlocked} onSetCapacity={setCapacity} onSaveOrg={saveOrg} onOpen={setSelectedId} />
