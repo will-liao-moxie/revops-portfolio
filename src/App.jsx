@@ -324,8 +324,9 @@ export default function App() {
     let full = patch;
     if ("workstream" in patch) full = { ...patch, code: nextCode(patch.workstream, projects, id) };
     setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, ...full } : p)));
-    try { const res = await apiWrite("/api/projects", "PATCH", { id, ...full }); if (res.projects) { setProjects(res.projects); cacheProjects(res.projects); } }
+    try { const res = await apiWrite("/api/projects", "PATCH", { id, ...full }); if (res.projects) { setProjects(res.projects); cacheProjects(res.projects); return res.projects.find((x) => x.id === id) || null; } }
     catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
+    return null;
   };
   const addProject = async (proj) => { const res = await apiWrite("/api/projects", "POST", proj); if (res.projects) { setProjects(res.projects); cacheProjects(res.projects); } else await refresh(); setSelectedId(proj.id); };
   // CSV import: create new rows, PATCH matched rows (upsert). Returns counts for the modal.
@@ -791,77 +792,94 @@ function OrgEditor({ org, onSave, onDirty }) {
 
 /* ---------- DETAIL DRAWER ---------- */
 function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemove, onOpen }) {
-  const ws = wsMeta(p.workstream);
-  const deps = p.dependsOn || [];
-  const committed = (p.deliverables || []).filter((d) => !d.stretch);
-  const stretch = (p.deliverables || []).filter((d) => d.stretch);
+  // Edits are buffered in a local draft and only persisted on "Save changes" — one batched write,
+  // no per-field autosave racing through the shared blob.
+  const [draft, setDraft] = useState(p);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setDraft(p); }, [p.id]); // reset only when switching to a different project
+  const up = (patch) => setDraft((cur) => ({ ...cur, ...patch }));
+  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(p), [draft, p]);
+  const saveAll = async () => {
+    const diff = {};
+    Object.keys(draft).forEach((k) => { if (JSON.stringify(draft[k]) !== JSON.stringify(p[k])) diff[k] = draft[k]; });
+    if (!Object.keys(diff).length) return;
+    setSaving(true);
+    try { const updated = await onUpdate(diff); if (updated) setDraft(updated); } finally { setSaving(false); }
+  };
+  const discard = () => setDraft(p);
+  const tryClose = () => { if (dirty && !window.confirm("You have unsaved changes. Discard them?")) return; onClose(); };
+
+  const ws = wsMeta(draft.workstream);
+  const deps = draft.dependsOn || [];
+  const committed = (draft.deliverables || []).filter((d) => !d.stretch);
+  const stretch = (draft.deliverables || []).filter((d) => d.stretch);
   const depOptions = Object.values(byId).filter((x) => x.id !== p.id);
-  const targetOpts = Array.from(new Set([p.targetWindow || "TBD", ...TARGETS]));
+  const targetOpts = Array.from(new Set([draft.targetWindow || "TBD", ...TARGETS]));
   const [ganttMsg, setGanttMsg] = useState("");
   const [showImport, setShowImport] = useState(false);
-  const ganttTasks = projectTasks(p);
+  const ganttTasks = projectTasks(draft);
   const allDeliv = [...committed, ...stretch];
   const delSet = new Set(allDeliv.map((d) => normDel(d.text)));
-  const schedNames = new Set((p.schedule || []).map((t) => normDel(t.deliverable)));
+  const schedNames = new Set((draft.schedule || []).map((t) => normDel(t.deliverable)));
   const unscheduled = allDeliv.filter((d) => !schedNames.has(normDel(d.text)));
-  const unmatched = (p.schedule || []).filter((t) => !delSet.has(normDel(t.deliverable)));
+  const unmatched = (draft.schedule || []).filter((t) => !delSet.has(normDel(t.deliverable)));
   const allScheduledShown = ganttTasks.length > 0 && unscheduled.length === 0 && unmatched.length === 0;
   const showBuilt = unlocked || !allScheduledShown;
-  const applyTimeline = (tasks) => { onUpdate({ schedule: tasks }); setShowImport(false); setGanttMsg(`Loaded ${tasks.length} deliverable${tasks.length === 1 ? "" : "s"} into the timeline.`); };
-  const exportProjectTimeline = () => { const blob = new Blob([timelineToCsv([p])], { type: "text/csv;charset=utf-8;" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${p.code}-timeline.csv`; a.click(); URL.revokeObjectURL(url); };
+  const applyTimeline = (tasks) => { up({ schedule: tasks }); setShowImport(false); setGanttMsg(`Loaded ${tasks.length} deliverable${tasks.length === 1 ? "" : "s"} into the timeline — review and Save changes.`); };
+  const exportProjectTimeline = () => { const blob = new Blob([timelineToCsv([draft])], { type: "text/csv;charset=utf-8;" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${draft.code}-timeline.csv`; a.click(); URL.revokeObjectURL(url); };
 
   return (
     <>
-    {showImport && <TimelineImportModal heading={`Import timeline — ${p.code}`} deliverables={allDeliv} onClose={() => setShowImport(false)} onApply={applyTimeline} />}
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
+    {showImport && <TimelineImportModal heading={`Import timeline — ${draft.code}`} deliverables={allDeliv} onClose={() => setShowImport(false)} onApply={applyTimeline} />}
+    <div onClick={tryClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
       <div className="proj-drawer" onClick={(e) => e.stopPropagation()} style={{ height: "100%", background: T.bg, overflowY: "auto", boxShadow: "-12px 0 40px rgba(28,37,33,.18)", fontFamily: T.body }}>
         <div style={{ padding: "22px 26px 18px", background: T.surface, borderBottom: `1px solid ${T.hairline}`, position: "sticky", top: 0, zIndex: 2 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <Eyebrow color={ws.color}>{p.code}</Eyebrow>
-                {unlocked ? <WorkstreamSelect value={p.workstream} options={workstreams} color={ws.color} onChange={(v) => onUpdate({ workstream: v })} /> : <Chip bg={ws.soft} fg={ws.color}>{p.workstream}</Chip>}
+                <Eyebrow color={ws.color}>{draft.code}</Eyebrow>
+                {unlocked ? <WorkstreamSelect value={draft.workstream} options={workstreams} color={ws.color} onChange={(v) => up({ workstream: v })} /> : <Chip bg={ws.soft} fg={ws.color}>{draft.workstream}</Chip>}
               </div>
-              {unlocked ? <div style={{ marginTop: 8 }}><TextEdit value={p.title} placeholder="Project title" big onCommit={(v) => onUpdate({ title: v })} /></div>
-                : <h2 style={{ fontFamily: T.display, fontWeight: 800, fontSize: 24, margin: "8px 0 0", letterSpacing: "-0.02em", lineHeight: 1.1 }}>{p.title}</h2>}
-              {(unlocked || p.dri) && (
+              {unlocked ? <div style={{ marginTop: 8 }}><TextEdit value={draft.title} placeholder="Project title" big onCommit={(v) => up({ title: v })} /></div>
+                : <h2 style={{ fontFamily: T.display, fontWeight: 800, fontSize: 24, margin: "8px 0 0", letterSpacing: "-0.02em", lineHeight: 1.1 }}>{draft.title}</h2>}
+              {(unlocked || draft.dri) && (
                 <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8 }}>
                   <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft }}>DRI</span>
-                  {unlocked ? <TextEdit value={p.dri} placeholder="Accountable owner" onCommit={(v) => onUpdate({ dri: v })} /> : <span style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{p.dri}</span>}
+                  {unlocked ? <TextEdit value={draft.dri} placeholder="Accountable owner" onCommit={(v) => up({ dri: v })} /> : <span style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{draft.dri}</span>}
                 </div>
               )}
             </div>
-            <button onClick={onClose} aria-label="Close" style={{ background: "none", border: `1px solid ${T.hairline}`, borderRadius: 8, width: 32, height: 32, fontSize: 16, color: T.inkSoft, flexShrink: 0 }}>✕</button>
+            <button onClick={tryClose} aria-label="Close" style={{ background: "none", border: `1px solid ${T.hairline}`, borderRadius: 8, width: 32, height: 32, fontSize: 16, color: T.inkSoft, flexShrink: 0 }}>✕</button>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 0, marginTop: 16, border: `1px solid ${T.hairline}`, borderRadius: 10, overflow: "hidden" }}>
-            <Stat label="Impact">{unlocked ? <MiniSelect value={p.impact} options={[1, 2, 3, 4, 5]} onChange={(v) => onUpdate({ impact: Number(v) })} /> : <ScoreDots value={p.impact} color={ws.color} />}</Stat>
-            <Stat label="Effort">{unlocked ? <MiniSelect value={p.effort || "M"} options={EFFORTS} onChange={(v) => onUpdate({ effort: v })} /> : <EffortChip effort={p.effort} ws={ws} />}</Stat>
-            <Stat label="Target">{unlocked ? <MiniSelect value={p.targetWindow || "TBD"} options={targetOpts} onChange={(v) => onUpdate({ targetWindow: v })} /> : <span style={{ fontSize: 13, fontWeight: 600 }}>{p.targetWindow || "TBD"}</span>}</Stat>
+            <Stat label="Impact">{unlocked ? <MiniSelect value={draft.impact} options={[1, 2, 3, 4, 5]} onChange={(v) => up({ impact: Number(v) })} /> : <ScoreDots value={draft.impact} color={ws.color} />}</Stat>
+            <Stat label="Effort">{unlocked ? <MiniSelect value={draft.effort || "M"} options={EFFORTS} onChange={(v) => up({ effort: v })} /> : <EffortChip effort={draft.effort} ws={ws} />}</Stat>
+            <Stat label="Target">{unlocked ? <MiniSelect value={draft.targetWindow || "TBD"} options={targetOpts} onChange={(v) => up({ targetWindow: v })} /> : <span style={{ fontSize: 13, fontWeight: 600 }}>{draft.targetWindow || "TBD"}</span>}</Stat>
           </div>
         </div>
 
         <div className="proj-grid" style={{ padding: "20px 26px 6px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-            <AccentCard accent="#C0463E" icon="!" title="The problem">{unlocked ? <AreaEdit value={p.problem} onCommit={(v) => onUpdate({ problem: v })} /> : <p style={cardText}><Linkify>{p.problem}</Linkify></p>}</AccentCard>
-            <AccentCard accent={ws.color} icon="→" title="The solution">{unlocked ? <AreaEdit value={p.solution} onCommit={(v) => onUpdate({ solution: v })} /> : <p style={cardText}><Linkify>{p.solution}</Linkify></p>}</AccentCard>
+            <AccentCard accent="#C0463E" icon="!" title="The problem">{unlocked ? <AreaEdit value={draft.problem} onCommit={(v) => up({ problem: v })} /> : <p style={cardText}><Linkify>{draft.problem}</Linkify></p>}</AccentCard>
+            <AccentCard accent={ws.color} icon="→" title="The solution">{unlocked ? <AreaEdit value={draft.solution} onCommit={(v) => up({ solution: v })} /> : <p style={cardText}><Linkify>{draft.solution}</Linkify></p>}</AccentCard>
 
             <AccentCard accent="#1E8A4C" icon="✓" title="Definition of success">
-              {unlocked ? <AreaEdit value={p.success} onCommit={(v) => onUpdate({ success: v })} /> : <p style={cardText}><Linkify>{p.success}</Linkify></p>}
+              {unlocked ? <AreaEdit value={draft.success} onCommit={(v) => up({ success: v })} /> : <p style={cardText}><Linkify>{draft.success}</Linkify></p>}
             </AccentCard>
 
-            {((p.openItems || []).length > 0 || unlocked) && (
+            {((draft.openItems || []).length > 0 || unlocked) && (
               <AccentCard accent="#C28A12" icon="?" title="Risks & assumptions">
-                {unlocked ? <StringListEditor items={p.openItems || []} placeholder="Add a risk or assumption" onCommit={(v) => onUpdate({ openItems: v })} />
-                  : <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: T.ink }}>{p.openItems.map((o, i) => <li key={i}><Linkify>{o}</Linkify></li>)}</ul>}
+                {unlocked ? <StringListEditor items={draft.openItems || []} placeholder="Add a risk or assumption" onCommit={(v) => up({ openItems: v })} />
+                  : <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: T.ink }}>{(draft.openItems || []).map((o, i) => <li key={i}><Linkify>{o}</Linkify></li>)}</ul>}
               </AccentCard>
             )}
           </div>
 
           <aside style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
             <Panel title="Team & resourcing">
-              {unlocked ? <RoleEditor items={p.roles || []} accent={ws.color} org={org} onCommit={(v) => onUpdate({ roles: v })} /> : (
+              {unlocked ? <RoleEditor items={draft.roles || []} accent={ws.color} org={org} onCommit={(v) => up({ roles: v })} /> : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {(p.roles || []).map((r, i) => {
+                  {(draft.roles || []).map((r, i) => {
                     const res = resolveResource(org, r.who);
                     return (
                       <div key={i} style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 13 }}>
@@ -876,14 +894,14 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
                       </div>
                     );
                   })}
-                  {!(p.roles || []).length && <div style={{ fontSize: 12.5, color: T.inkSoft }}>No resources assigned yet.</div>}
+                  {!(draft.roles || []).length && <div style={{ fontSize: 12.5, color: T.inkSoft }}>No resources assigned yet.</div>}
                 </div>
               )}
             </Panel>
 
             {(deps.length > 0 || unlocked) && (
               <Panel title="Depends on">
-                {unlocked ? <DependsEditor items={deps} options={depOptions} onCommit={(v) => onUpdate({ dependsOn: v })} /> : (
+                {unlocked ? <DependsEditor items={deps} options={depOptions} onCommit={(v) => up({ dependsOn: v })} /> : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {deps.map((d, i) => { const dep = byId[d.id]; return <div key={i} style={{ fontSize: 13, lineHeight: 1.5, display: "flex", gap: 8, alignItems: "baseline" }}><span style={{ color: "#A33D3D", fontWeight: 700 }}>↳</span><span>{dep ? <button onClick={() => onOpen(dep.id)} style={linkBtn}>{dep.code} — {dep.title}</button> : <span style={{ fontWeight: 600 }}>Outside this portfolio</span>}{d.note && <span style={{ color: T.inkSoft }}> — <Linkify>{d.note}</Linkify></span>}</span></div>; })}
                   </div>
@@ -897,7 +915,7 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
         {showBuilt && (
           <div style={{ padding: "10px 26px 0" }}>
             <Panel title={`What's being built${committed.length ? ` · ${committed.length}` : ""}`}>
-              {unlocked ? <DeliverableEditor items={p.deliverables || []} accent={ws.color} onCommit={(v) => onUpdate({ deliverables: v })} /> : (
+              {unlocked ? <DeliverableEditor items={draft.deliverables || []} accent={ws.color} onCommit={(v) => up({ deliverables: v })} /> : (
                 <>
                   <ul style={listReset}>{committed.map((d, i) => <li key={i} style={liRow}><span style={{ color: DELIV_TYPE.required.color, fontWeight: 700, marginTop: 1 }}>✓</span><span><Linkify>{d.text}</Linkify></span></li>)}</ul>
                   {stretch.length > 0 && (
@@ -917,7 +935,7 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
             <SectionTitle>Timeline — deliverables × owner</SectionTitle>
             <div style={{ display: "flex", gap: 6 }}>
-              {(p.schedule || []).length > 0 && <button onClick={exportProjectTimeline} style={{ ...btnGhost, fontSize: 12 }}>↓ Export</button>}
+              {(draft.schedule || []).length > 0 && <button onClick={exportProjectTimeline} style={{ ...btnGhost, fontSize: 12 }}>↓ Export</button>}
               {unlocked && <button onClick={() => setShowImport(true)} style={{ ...btnGhost, fontSize: 12 }}>↑ Import CSV</button>}
             </div>
           </div>
@@ -925,7 +943,7 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
           {ganttTasks.length ? (
             <>
               <div style={{ marginBottom: 8 }}><GanttLegend /></div>
-              <div style={{ border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 10 }}><GanttGrid groups={[{ key: p.id, label: "", color: ws.color, tasks: ganttTasks }]} org={org} labelHeader="Deliverable" /></div>
+              <div style={{ border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 10 }}><GanttGrid groups={[{ key: draft.id, label: "", color: ws.color, tasks: ganttTasks }]} org={org} labelHeader="Deliverable" /></div>
               <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5, fontSize: 12 }}>
                 <span style={{ color: T.inkSoft }}><strong style={{ color: T.ink }}>{committed.length + stretch.length - unscheduled.length}/{committed.length + stretch.length}</strong> deliverables scheduled</span>
                 {unscheduled.length > 0 && <span style={{ color: T.inkSoft }}><span style={{ color: "#9A6A12", fontWeight: 600 }}>Unscheduled:</span> {unscheduled.map((d) => d.text).join(" · ")}</span>}
@@ -940,13 +958,22 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
           )}
           {unlocked && (
             <div style={{ marginTop: 14 }}>
-              <div style={{ marginBottom: 8 }}><SectionTitle>Edit timeline</SectionTitle> <span style={{ fontSize: 11.5, color: T.inkSoft }}>— pick a deliverable and a roster owner; set the quarter, start week, duration, and effort.</span></div>
-              <TimelineEditor items={p.schedule || []} deliverables={allDeliv} org={org} onCommit={(v) => onUpdate({ schedule: v })} />
+              <div style={{ marginBottom: 8 }}><SectionTitle>Edit timeline</SectionTitle> <span style={{ fontSize: 11.5, color: T.inkSoft }}>— pick a deliverable and a roster owner; set the quarter and start week, then a duration that can run past the quarter into later ones.</span></div>
+              <TimelineEditor items={draft.schedule || []} deliverables={allDeliv} org={org} onCommit={(v) => up({ schedule: v })} />
             </div>
           )}
         </div>
 
-        {unlocked && <div style={{ padding: "12px 26px 32px" }}><button onClick={onRemove} style={{ fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "9px 14px", borderRadius: 8, background: "none", border: "1px solid #D9A0A0", color: "#A33D3D" }}>Remove project</button></div>}
+        {unlocked && <div style={{ padding: "12px 26px 30px" }}><button onClick={onRemove} style={{ fontFamily: T.body, fontSize: 13, fontWeight: 500, padding: "9px 14px", borderRadius: 8, background: "none", border: "1px solid #D9A0A0", color: "#A33D3D" }}>Remove project</button></div>}
+
+        {unlocked && (
+          <div style={{ position: "sticky", bottom: 0, zIndex: 3, background: T.surface, borderTop: `1px solid ${T.hairline}`, padding: "12px 26px", display: "flex", alignItems: "center", gap: 10, boxShadow: "0 -6px 20px rgba(28,37,33,.07)" }}>
+            <span style={{ fontSize: 12, color: dirty ? "#9A6A12" : T.inkSoft, fontWeight: dirty ? 600 : 500 }}>{dirty ? "Unsaved changes" : "All changes saved"}</span>
+            <div style={{ flex: 1 }} />
+            {dirty && <button onClick={discard} disabled={saving} style={btnGhost}>Discard</button>}
+            <button onClick={saveAll} disabled={!dirty || saving} style={{ ...btnSolid, opacity: !dirty || saving ? 0.5 : 1 }}>{saving ? "Saving…" : "Save changes"}</button>
+          </div>
+        )}
       </div>
     </div>
     </>
@@ -957,12 +984,12 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
 function TextEdit({ value, placeholder, onCommit, big }) {
   const [v, setV] = useState(value || "");
   useEffect(() => { setV(value || ""); }, [value]);
-  return <input value={v} placeholder={placeholder} onChange={(e) => setV(e.target.value)} onBlur={() => { if (v !== (value || "")) onCommit(v); }} style={{ fontFamily: big ? T.display : T.body, fontSize: big ? 20 : 12.5, fontWeight: big ? 800 : 600, letterSpacing: big ? "-0.01em" : 0, padding: big ? "4px 8px" : "3px 7px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, minWidth: big ? "100%" : 150, width: big ? "100%" : undefined }} />;
+  return <input value={v} placeholder={placeholder} onChange={(e) => { setV(e.target.value); onCommit(e.target.value); }} style={{ fontFamily: big ? T.display : T.body, fontSize: big ? 20 : 12.5, fontWeight: big ? 800 : 600, letterSpacing: big ? "-0.01em" : 0, padding: big ? "4px 8px" : "3px 7px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, minWidth: big ? "100%" : 150, width: big ? "100%" : undefined }} />;
 }
 function AreaEdit({ value, onCommit, rows = 3 }) {
   const [v, setV] = useState(value || "");
   useEffect(() => { setV(value || ""); }, [value]);
-  return <textarea value={v} rows={rows} onChange={(e) => setV(e.target.value)} onBlur={() => { if (v !== (value || "")) onCommit(v); }} style={{ width: "100%", fontFamily: T.body, fontSize: 13, lineHeight: 1.5, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, resize: "vertical" }} />;
+  return <textarea value={v} rows={rows} onChange={(e) => { setV(e.target.value); onCommit(e.target.value); }} style={{ width: "100%", fontFamily: T.body, fontSize: 13, lineHeight: 1.5, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, resize: "vertical" }} />;
 }
 function DeliverableEditor({ items, accent, onCommit }) {
   const [list, setList] = useState(items);
@@ -979,7 +1006,7 @@ function DeliverableEditor({ items, accent, onCommit }) {
             <button onClick={() => move(i, 1)} disabled={i === list.length - 1} title="Move down" style={{ ...arrow, opacity: i === list.length - 1 ? 0.25 : 1 }}>▼</button>
           </div>
           <button title={d.stretch ? "Stretch — click to commit" : "Committed — click to mark stretch"} onClick={() => push(list.map((x, j) => j === i ? { ...x, stretch: !x.stretch } : x))} style={{ background: "none", border: "none", fontSize: 14, color: d.stretch ? "#C9A24B" : accent, width: 18 }}>{d.stretch ? "○" : "✓"}</button>
-          <input value={d.text} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, text: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="Deliverable" style={{ flex: 1, fontFamily: T.body, fontSize: 13, padding: "5px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink }} />
+          <input value={d.text} onChange={(e) => push(list.map((x, j) => j === i ? { ...x, text: e.target.value } : x))} placeholder="Deliverable" style={{ flex: 1, fontFamily: T.body, fontSize: 13, padding: "5px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink }} />
           <button onClick={() => push(list.filter((_, j) => j !== i))} style={xBtn} aria-label="Remove">✕</button>
         </div>
       ))}
@@ -1017,7 +1044,7 @@ function RoleEditor({ items, accent, org, onCommit }) {
                 </select>
                 <MiniSelect value={r.effort || "M"} options={EFFORTS} onChange={(v) => push(list.map((x, j) => j === i ? { ...x, effort: v } : x))} />
               </div>
-              <input value={r.what} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, what: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="What they do on this project" style={{ width: "100%", minWidth: 0, boxSizing: "border-box", fontFamily: T.body, fontSize: 12.5, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.inkSoft }} />
+              <input value={r.what} onChange={(e) => push(list.map((x, j) => j === i ? { ...x, what: e.target.value } : x))} placeholder="What they do on this project" style={{ width: "100%", minWidth: 0, boxSizing: "border-box", fontFamily: T.body, fontSize: 12.5, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.inkSoft }} />
             </div>
             <button onClick={() => push(list.filter((_, j) => j !== i))} style={{ ...xBtn, flexShrink: 0 }} aria-label="Remove">✕</button>
           </div>
@@ -1035,7 +1062,7 @@ function StringListEditor({ items, placeholder, onCommit }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {list.map((s, i) => (
         <div key={i} style={{ display: "flex", gap: 7, alignItems: "center" }}>
-          <input value={s} onChange={(e) => setList(list.map((x, j) => j === i ? e.target.value : x))} onBlur={() => onCommit(list)} placeholder={placeholder} style={{ flex: 1, fontFamily: T.body, fontSize: 13, padding: "5px 8px", borderRadius: 6, border: `1px solid #E2CF9E`, background: "#FFFDF7", color: "#6E5612" }} />
+          <input value={s} onChange={(e) => push(list.map((x, j) => j === i ? e.target.value : x))} placeholder={placeholder} style={{ flex: 1, fontFamily: T.body, fontSize: 13, padding: "5px 8px", borderRadius: 6, border: `1px solid #E2CF9E`, background: "#FFFDF7", color: "#6E5612" }} />
           <button onClick={() => push(list.filter((_, j) => j !== i))} style={xBtn} aria-label="Remove">✕</button>
         </div>
       ))}
@@ -1055,7 +1082,7 @@ function DependsEditor({ items, options, onCommit }) {
             <option value="">Outside portfolio</option>
             {options.map((o) => <option key={o.id} value={o.id}>{o.code}</option>)}
           </select>
-          <input value={d.note || ""} onChange={(e) => setList(list.map((x, j) => j === i ? { ...x, note: e.target.value } : x))} onBlur={() => onCommit(list)} placeholder="Why it's a prerequisite" style={{ flex: 1, minWidth: 120, fontFamily: T.body, fontSize: 12.5, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.inkSoft }} />
+          <input value={d.note || ""} onChange={(e) => push(list.map((x, j) => j === i ? { ...x, note: e.target.value } : x))} placeholder="Why it's a prerequisite" style={{ flex: 1, minWidth: 120, fontFamily: T.body, fontSize: 12.5, padding: "4px 8px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.inkSoft }} />
           <button onClick={() => push(list.filter((_, j) => j !== i))} style={xBtn} aria-label="Remove">✕</button>
         </div>
       ))}
@@ -1324,7 +1351,7 @@ function TimelineEditor({ items, deliverables, org, onCommit }) {
               <select value={wk} onChange={(e) => upd(i, { start: `${q} W${e.target.value}` })} style={sel}>{wkOpts.map((w) => <option key={w} value={w}>W{w}</option>)}</select>
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>{lbl("WEEKS")}
-              <select value={Math.max(1, Number(t.weeks) || 1)} onChange={(e) => upd(i, { weeks: Number(e.target.value) })} style={sel}>{wkOpts.map((w) => <option key={w} value={w}>{w}</option>)}</select>
+              <input type="number" min={1} value={Math.max(1, Number(t.weeks) || 1)} onChange={(e) => upd(i, { weeks: Math.max(1, Number(e.target.value) || 1) })} title="Duration in weeks — may run past the quarter into later ones" style={{ ...sel, width: 58 }} />
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>{lbl("EFFORT")}
               <select value={t.effort || "M"} onChange={(e) => upd(i, { effort: e.target.value })} style={sel}>{EFFORTS.map((x) => <option key={x} value={x}>{x}</option>)}</select>
