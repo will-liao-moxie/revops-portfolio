@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 
 /* ============================================================
    MOXIE REVOPS — PROJECT PORTFOLIO
@@ -256,7 +256,7 @@ function WorkstreamSelect({ value, options, onChange, color }) {
 }
 
 /* ---------- main app ---------- */
-const CACHE_KEY = "revops:data:v1";
+const CACHE_KEY = "revops:data:v2"; // v2: bumped to discard any stale/divergent v1 cache
 const readCache = () => { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "null"); } catch { return null; } };
 const writeCache = (d) => { try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch { /* quota/private mode */ } };
 
@@ -280,13 +280,23 @@ export default function App() {
     setWeeklyCap(s.weeklyCap || {});
     setOrg(Array.isArray(s.org) && s.org.length ? s.org : DEFAULT_ORG);
   };
+  // mirror the latest rendered state so cache writes can grab the half that didn't change in a mutation
+  const stateRef = useRef({ projects: [], settings: {} });
+  stateRef.current = { projects, settings: { capacities, weeklyCap, org } };
+  // The local cache only ever holds SERVER-CONFIRMED state — never optimistic in-flight edits — so a
+  // failed/stale read falls back to what actually persisted, not phantom edits.
+  const cacheProjects = (nextProjects) => writeCache({ projects: nextProjects, settings: stateRef.current.settings });
+  const cacheSettings = (nextSettings) => writeCache({ projects: stateRef.current.projects, settings: nextSettings });
+
   // single combined read (1 list op/load instead of 2); falls back to the local cache on any error
   const refresh = async () => {
     try {
       setLoadError("");
       const res = await fetch("/api/data", { cache: "no-store" });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Could not load data (${res.status})`); }
-      applyState(await res.json());
+      const data = await res.json();
+      applyState(data);
+      writeCache({ projects: data.projects || [], settings: data.settings || {} });
     } catch (e) {
       const cached = readCache();
       if (cached) { applyState(cached); setLoadError(""); } else setLoadError(e.message);
@@ -297,8 +307,6 @@ export default function App() {
     if (cached) { applyState(cached); setLoaded(true); } // instant paint from cache, then revalidate
     refresh();
   }, []);
-  // keep the local cache in sync so reloads paint instantly and survive a transient API/quota hiccup
-  useEffect(() => { if (loaded) writeCache({ projects, settings: { capacities, weeklyCap, org } }); }, [loaded, projects, capacities, weeklyCap, org]);
 
   const toggleLock = () => {
     if (unlocked) { clearEditKey(); setUnlocked(false); return; }
@@ -316,21 +324,21 @@ export default function App() {
     let full = patch;
     if ("workstream" in patch) full = { ...patch, code: nextCode(patch.workstream, projects, id) };
     setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, ...full } : p)));
-    try { const res = await apiWrite("/api/projects", "PATCH", { id, ...full }); if (res.projects) setProjects(res.projects); }
+    try { const res = await apiWrite("/api/projects", "PATCH", { id, ...full }); if (res.projects) { setProjects(res.projects); cacheProjects(res.projects); } }
     catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
   };
-  const addProject = async (proj) => { const res = await apiWrite("/api/projects", "POST", proj); if (res.projects) setProjects(res.projects); else await refresh(); setSelectedId(proj.id); };
+  const addProject = async (proj) => { const res = await apiWrite("/api/projects", "POST", proj); if (res.projects) { setProjects(res.projects); cacheProjects(res.projects); } else await refresh(); setSelectedId(proj.id); };
   // CSV import: create new rows, PATCH matched rows (upsert). Returns counts for the modal.
   const importProjects = async (creates, updates) => {
     let res;
     for (const proj of creates) { res = await apiWrite("/api/projects", "POST", proj); }
     for (const patch of updates) { const { _code, ...clean } = patch; res = await apiWrite("/api/projects", "PATCH", clean); }
-    if (res && res.projects) setProjects(res.projects); else await refresh();
+    if (res && res.projects) { setProjects(res.projects); cacheProjects(res.projects); } else await refresh();
     return { created: creates.length, updated: updates.length };
   };
   const removeProject = async (id) => {
     if (!window.confirm("Remove this project from the portfolio?")) return;
-    try { const res = await apiWrite("/api/projects", "DELETE", { id }); setSelectedId(null); if (res.projects) setProjects(res.projects); else await refresh(); }
+    try { const res = await apiWrite("/api/projects", "DELETE", { id }); setSelectedId(null); if (res.projects) { setProjects(res.projects); cacheProjects(res.projects); } else await refresh(); }
     catch (e) { window.alert(`Couldn't remove: ${e.message}`); }
   };
   const exportCsv = () => {
@@ -341,11 +349,11 @@ export default function App() {
   };
   const persistSettings = async (next) => {
     const payload = { capacities: next.capacities ?? capacities, weeklyCap: next.weeklyCap ?? weeklyCap, org: next.org ?? org };
-    try { await apiWrite("/api/settings", "PUT", payload); } catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
+    try { await apiWrite("/api/settings", "PUT", payload); cacheSettings(payload); } catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
   };
   const setCapacity = (label, value) => { const c = { ...capacities, [label]: value }; setCapacities(c); persistSettings({ capacities: c }); };
   const setWeekly = (person, value) => { const c = { ...weeklyCap, [person]: value }; setWeeklyCap(c); persistSettings({ weeklyCap: c }); };
-  const saveOrg = (nextOrg) => { setOrg(nextOrg); persistSettings({ org: nextOrg }); };
+  const saveOrg = (nextOrg) => { setOrg(nextOrg); return persistSettings({ org: nextOrg }); };
   const importSchedule = async (text) => {
     const { byProjectId, error, count } = csvToSchedule(text, projects);
     if (error) throw new Error(error);
@@ -611,7 +619,12 @@ const TEAM_W = 210, ALLOC_W = 66, CAP_W = 64;
 const FROZEN = { team: { position: "sticky", left: 0, zIndex: 2 }, alloc: { position: "sticky", left: TEAM_W, zIndex: 2 }, cap: { position: "sticky", left: TEAM_W + ALLOC_W, zIndex: 2, borderRight: `1px solid ${T.hairline}` } };
 function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSaveOrg, onOpen }) {
   const [managing, setManaging] = useState(false);
+  const [rosterDirty, setRosterDirty] = useState(false);
   const [mode, setMode] = useState("quarter"); // "quarter" | "project"
+  const toggleManage = () => {
+    if (managing && rosterDirty && !window.confirm("You have unsaved roster changes. Discard them?")) return;
+    setManaging((m) => !m); setRosterDirty(false);
+  };
   const exportRoster = () => {
     const blob = new Blob([rosterToCsv(org)], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -647,7 +660,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.mono, fontSize: 11.5, color: T.inkSoft }}>
           <button onClick={exportRoster} title="Download the team roster as CSV" style={btnGhost}>↓ Export roster</button>
-          {unlocked && <button onClick={() => setManaging((m) => !m)} style={btnGhost}>{managing ? "Done" : "✎ Manage teams"}</button>}
+          {unlocked && <button onClick={toggleManage} style={btnGhost}>{managing ? "Done" : "✎ Manage teams"}</button>}
           <span style={{ letterSpacing: "0.06em" }}>WORK UNITS</span>
           {EFFORTS.map((s) => <span key={s} style={{ padding: "2px 7px", borderRadius: 6, background: T.hairlineSoft, color: T.ink, fontWeight: 700 }}>{s}={EFFORT_POINTS[s]}</span>)}
         </div>
@@ -658,7 +671,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
         {tab("quarter", "By quarter")}{tab("category", "By category")}{tab("project", "By project")}
       </div>
 
-      {managing && unlocked && <OrgEditor org={org} onSave={onSaveOrg} />}
+      {managing && unlocked && <OrgEditor org={org} onSave={onSaveOrg} onDirty={setRosterDirty} />}
 
       <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760, fontFamily: T.body }}>
@@ -708,10 +721,20 @@ function ResourceGroup({ group, rows, mode, projects, quarters, categories, capa
 }
 
 /* ---------- ORG EDITOR (add/modify teams, subteams, resources) ---------- */
-function OrgEditor({ org, onSave }) {
+function OrgEditor({ org, onSave, onDirty }) {
   const [draft, setDraft] = useState(org);
-  useEffect(() => { setDraft(org); }, [org]);
-  const commit = (next) => { setDraft(next); onSave(next); };
+  const [saving, setSaving] = useState(false);
+  const [rev, setRev] = useState(0); // bump to remount the (uncontrolled) inputs after reset/save
+  useEffect(() => { setDraft(org); setRev((r) => r + 1); }, [org]);
+  // edits are LOCAL until "Save roster" — one batched write avoids the per-field write storm that
+  // raced through the shared blob and left phantom/duplicate rows.
+  // all edits arrive via onBlur or button clicks, so remounting inputs each commit keeps the
+  // uncontrolled fields in sync with the draft (after add/delete/reorder) without disrupting typing
+  const commit = (next) => { setDraft(next); setRev((r) => r + 1); };
+  const reset = () => { setDraft(org); setRev((r) => r + 1); };
+  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(org), [draft, org]);
+  useEffect(() => { onDirty && onDirty(dirty); }, [dirty, onDirty]);
+  const save = async () => { setSaving(true); try { await onSave(draft); } finally { setSaving(false); } };
 
   const setGroup = (gi, fn) => draft.map((g, i) => (i === gi ? fn(g) : g));
   const setMember = (gi, mi, fn) => setGroup(gi, (g) => ({ ...g, members: g.members.map((m, i) => (i === mi ? fn(m) : m)) }));
@@ -720,8 +743,15 @@ function OrgEditor({ org, onSave }) {
 
   return (
     <div style={{ background: T.paper, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 16 }}>
-      <div style={{ marginBottom: 10 }}><SectionTitle>Manage roster</SectionTitle> <span style={{ fontSize: 12, color: T.inkSoft }}>— add or edit teams, sub-teams, and people. A team counts toward a project when the project names that team (or its lead) in its Team &amp; resourcing list.</span></div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 10 }}>
+        <div><SectionTitle>Manage roster</SectionTitle> <span style={{ fontSize: 12, color: T.inkSoft }}>— add or edit teams, sub-teams, and people. A team counts toward a project when the project names that team (or its lead) in its Team &amp; resourcing list. Changes are saved only when you click <strong>Save roster</strong>.</span></div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+          {dirty && <span style={{ fontSize: 11.5, color: "#9A6A12", fontWeight: 600 }}>Unsaved changes</span>}
+          {dirty && <button onClick={reset} disabled={saving} style={btnGhost}>Discard</button>}
+          <button onClick={save} disabled={!dirty || saving} style={{ ...btnSolid, opacity: !dirty || saving ? 0.5 : 1 }}>{saving ? "Saving…" : "Save roster"}</button>
+        </div>
+      </div>
+      <div key={rev} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {draft.map((g, gi) => (
           <div key={gi} style={{ border: `1px solid ${T.hairline}`, borderRadius: 10, padding: "10px 12px", background: T.surface }}>
             <div style={{ display: "flex", gap: 7, alignItems: "center", marginBottom: 8 }}>
