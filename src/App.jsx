@@ -320,7 +320,14 @@ export default function App() {
     catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
   };
   const addProject = async (proj) => { const res = await apiWrite("/api/projects", "POST", proj); if (res.projects) setProjects(res.projects); else await refresh(); setSelectedId(proj.id); };
-  const addProjects = async (list) => { let res; for (const proj of list) { res = await apiWrite("/api/projects", "POST", proj); } if (res && res.projects) setProjects(res.projects); else await refresh(); };
+  // CSV import: create new rows, PATCH matched rows (upsert). Returns counts for the modal.
+  const importProjects = async (creates, updates) => {
+    let res;
+    for (const proj of creates) { res = await apiWrite("/api/projects", "POST", proj); }
+    for (const patch of updates) { const { _code, ...clean } = patch; res = await apiWrite("/api/projects", "PATCH", clean); }
+    if (res && res.projects) setProjects(res.projects); else await refresh();
+    return { created: creates.length, updated: updates.length };
+  };
   const removeProject = async (id) => {
     if (!window.confirm("Remove this project from the portfolio?")) return;
     try { const res = await apiWrite("/api/projects", "DELETE", { id }); setSelectedId(null); if (res.projects) setProjects(res.projects); else await refresh(); }
@@ -420,7 +427,7 @@ export default function App() {
       </main>
 
       {selected && <Detail p={selected} byId={byId} org={org} unlocked={unlocked} workstreams={allWorkstreams} onClose={() => setSelectedId(null)} onUpdate={(patch) => updateProject(selected.id, patch)} onRemove={() => removeProject(selected.id)} onOpen={setSelectedId} />}
-      {showAdd && <AddModal onClose={() => setShowAdd(false)} onAdd={addProject} onBulkAdd={addProjects} existing={projects} workstreams={allWorkstreams} />}
+      {showAdd && <AddModal onClose={() => setShowAdd(false)} onAdd={addProject} onImport={importProjects} existing={projects} workstreams={allWorkstreams} />}
     </div>
   );
 }
@@ -1060,13 +1067,23 @@ function parseCSV(text) {
   return rows.filter((r) => r.some((c) => c.trim() !== ""));
 }
 
-function csvToProjects(text, existing) {
+/* logical project field -> CSV header column name */
+const FIELD_COL = { title: "title", workstream: "workstream", dri: "dri", targetWindow: "target", stakeholder: "stakeholder", problem: "problem", solution: "solution", success: "success", deliverables: "deliverables", roles: "team", dependsOn: "dependson", openItems: "openitems", impact: "impact", effort: "effort" };
+
+// Parse a projects CSV. When upsert is true, rows whose `code` (or `id`) matches an existing
+// project become UPDATES (keeping that project's id/code; only the columns present in the CSV
+// are patched). All other rows are new CREATES.
+function csvToProjects(text, existing, upsert = false) {
+  const empty = { creates: [], updates: [], error: "Need a header row and at least one project row." };
   const rows = parseCSV(text);
-  if (rows.length < 2) return { projects: [], error: "Need a header row and at least one project row." };
+  if (rows.length < 2) return empty;
   const header = rows[0].map((h) => h.trim().toLowerCase());
   const at = (r, name) => { const j = header.indexOf(name.toLowerCase()); return j >= 0 ? (r[j] || "").trim() : ""; };
-  if (!header.includes("title")) return { projects: [], error: 'CSV must include a "title" column.' };
+  const has = (name) => header.includes(name.toLowerCase());
+  if (!has("title") && !has("code")) return { creates: [], updates: [], error: 'CSV must include a "title" or "code" column.' };
 
+  const byCode = {};
+  existing.forEach((p) => { byCode[p.code.toLowerCase()] = p; byCode[p.id.toLowerCase()] = p; });
   const codeToId = {};
   existing.forEach((p) => { codeToId[p.code.toLowerCase()] = p.id; codeToId[p.id.toLowerCase()] = p.id; });
   const usedIds = new Set(existing.map((p) => p.id));
@@ -1078,21 +1095,24 @@ function csvToProjects(text, existing) {
   const raw = [];
   for (let k = 1; k < rows.length; k++) {
     const r = rows[k];
-    const title = at(r, "title"); if (!title) continue;
-    const ws = at(r, "workstream") || "Other";
+    const title = at(r, "title");
+    const provided = at(r, "code");
+    const match = upsert && provided ? byCode[provided.toLowerCase()] : null;
+    if (!match && !title) continue; // a new project needs a title; an update needs a matching code
+    const ws = at(r, "workstream") || (match ? match.workstream : "Other");
+    if (match) { codeToId[match.code.toLowerCase()] = match.id; codeToId[match.id.toLowerCase()] = match.id; raw.push({ r, ws, isUpdate: true, id: match.id, code: match.code }); continue; }
     const base = slug(title);
     let id = base, n = 2; while (usedIds.has(id)) id = `${base}-${n++}`; usedIds.add(id);
-    const provided = at(r, "code");
     const code = provided ? provided.toUpperCase() : genCode(ws, usedCodes);
     if (provided) usedCodes.add(code);
     codeToId[code.toLowerCase()] = id; codeToId[id.toLowerCase()] = id;
-    raw.push({ r, id, code, title, ws });
+    raw.push({ r, ws, isUpdate: false, id, code });
   }
 
-  const out = raw.map(({ r, id, code, title, ws }) => {
+  const fields = (r, ws) => {
     const effort = (at(r, "effort") || "M").toUpperCase();
     return {
-      id, code, title, workstream: ws,
+      title: at(r, "title"), workstream: ws,
       dri: at(r, "dri"), targetWindow: at(r, "target") || "TBD", stakeholder: at(r, "stakeholder"),
       problem: at(r, "problem"), solution: at(r, "solution"), success: at(r, "success"),
       deliverables: items(at(r, "deliverables")).map((t) => t.startsWith("*") ? { text: t.slice(1).trim(), stretch: true } : { text: t, stretch: false }),
@@ -1101,8 +1121,21 @@ function csvToProjects(text, existing) {
       openItems: items(at(r, "openitems")),
       impact: num(at(r, "impact"), 3), effort: EFFORTS.includes(effort) ? effort : "M",
     };
+  };
+
+  const creates = [], updates = [];
+  raw.forEach(({ r, ws, isUpdate, id, code }) => {
+    const f = fields(r, ws);
+    if (isUpdate) {
+      const patch = { id, _code: code };
+      // only touch the fields the CSV actually carried (so a partial CSV doesn't wipe other columns)
+      Object.keys(FIELD_COL).forEach((field) => { if (has(FIELD_COL[field])) patch[field] = f[field]; });
+      updates.push(patch);
+    } else {
+      creates.push({ id, code, ...f });
+    }
   });
-  return { projects: out, error: out.length ? "" : "No rows with a title were found." };
+  return { creates, updates, error: (creates.length || updates.length) ? "" : "No usable rows found." };
 }
 
 /* ---------- CSV export ---------- */
@@ -1479,14 +1512,16 @@ function TimelineImportModal({ heading, deliverables, onClose, onApply }) {
 }
 
 /* ---------- ADD MODAL ---------- */
-function AddModal({ onClose, onAdd, onBulkAdd, existing, workstreams }) {
+function AddModal({ onClose, onAdd, onImport, existing, workstreams }) {
   const [mode, setMode] = useState("single");
   const [f, setF] = useState({ title: "", workstream: "Marketing Services", effort: "M", impact: 3, targetWindow: "Q3 2026", dri: "", problem: "", solution: "" });
   const [csv, setCsv] = useState("");
+  const [upsert, setUpsert] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const set = (k, v) => setF((prev) => ({ ...prev, [k]: v }));
-  const parsed = useMemo(() => csvToProjects(csv, existing), [csv, existing]);
+  const parsed = useMemo(() => csvToProjects(csv, existing, upsert), [csv, existing, upsert]);
+  const total = parsed.creates.length + parsed.updates.length;
 
   const submitSingle = () => {
     if (!f.title.trim()) { setErr("Title is required."); return; }
@@ -1501,9 +1536,9 @@ function AddModal({ onClose, onAdd, onBulkAdd, existing, workstreams }) {
     onAdd(obj).then(() => onClose()).catch((e) => setErr(e.message));
   };
   const submitCsv = () => {
-    if (!parsed.projects.length) { setErr(parsed.error || "Nothing to import."); return; }
+    if (!total) { setErr(parsed.error || "Nothing to import."); return; }
     setBusy(true); setErr("");
-    onBulkAdd(parsed.projects).then(() => onClose()).catch((e) => { setErr(e.message); setBusy(false); });
+    onImport(parsed.creates, parsed.updates).then(() => onClose()).catch((e) => { setErr(e.message); setBusy(false); });
   };
   const onFile = (e) => { const file = e.target.files[0]; if (!file) return; const rd = new FileReader(); rd.onload = () => setCsv(String(rd.result || "")); rd.readAsText(file); };
 
@@ -1544,11 +1579,12 @@ function AddModal({ onClose, onAdd, onBulkAdd, existing, workstreams }) {
           </>
         ) : (
           <>
-            <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "0 0 12px" }}>Upload or paste CSV to add many projects at once. Hand the format below to your planning agent so its output drops straight in.</p>
+            <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "0 0 12px" }}>Upload or paste CSV to add or update many projects at once. Hand the format below to your planning agent so its output drops straight in.</p>
             <div style={{ background: T.paper, border: `1px solid ${T.hairline}`, borderRadius: 10, padding: "12px 14px", marginBottom: 14, fontSize: 12.5, lineHeight: 1.6, color: T.inkSoft }}>
               <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: T.ink, marginBottom: 6 }}>CSV FORMAT</div>
               <div>One row per project. Header columns (any order; extras ignored): <span style={{ fontFamily: T.mono, color: T.ink }}>{CSV_COLUMNS.join(", ")}</span>.</div>
-              <div style={{ marginTop: 6 }}>Only <strong>title</strong> is required. <strong>effort</strong> ∈ XS/S/M/L/XL; <strong>impact</strong> 1–5; <strong>workstream</strong> is free text (new ones fine). The project code is derived from the workstream.</div>
+              <div style={{ marginTop: 6 }}>Only <strong>title</strong> is required for new projects. <strong>effort</strong> ∈ XS/S/M/L/XL; <strong>impact</strong> 1–5; <strong>workstream</strong> is free text (new ones fine). The project code is derived from the workstream.</div>
+              <div style={{ marginTop: 6 }}><strong>Updating:</strong> with the toggle on, any row whose <code style={codeChip}>code</code> matches an existing project updates it in place (no duplicate) — and only the columns you include are changed, so a partial CSV (e.g. just <code style={codeChip}>code,target</code>) leaves everything else intact.</div>
               <div style={{ marginTop: 6 }}>List cells separate items with <code style={codeChip}>|</code> and sub-fields with <code style={codeChip}>::</code> —</div>
               <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
                 <li><strong>deliverables</strong>: <code style={codeChip}>Build X | *Stretch item</code> (prefix <code style={codeChip}>*</code> = stretch)</li>
@@ -1561,10 +1597,14 @@ function AddModal({ onClose, onAdd, onBulkAdd, existing, workstreams }) {
             <label style={lbl}>UPLOAD .CSV</label>
             <input type="file" accept=".csv,text/csv" onChange={onFile} style={{ fontSize: 12.5, marginBottom: 10 }} />
             <label style={lbl}>OR PASTE CSV</label>
-            <textarea value={csv} onChange={(e) => { setCsv(e.target.value); setErr(""); }} rows={8} placeholder="title,workstream,effort,impact,..." style={{ ...field, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, resize: "vertical" }} />
-            <div style={{ fontSize: 12.5, color: parsed.error ? "#A33D3D" : T.inkSoft, margin: "8px 0 0" }}>{csv.trim() ? (parsed.error || `${parsed.projects.length} project${parsed.projects.length === 1 ? "" : "s"} ready: ${parsed.projects.map((p) => p.title).join(", ")}`) : "Waiting for CSV…"}</div>
+            <textarea value={csv} onChange={(e) => { setCsv(e.target.value); setErr(""); }} rows={8} placeholder="code,title,workstream,effort,impact,..." style={{ ...field, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, resize: "vertical" }} />
+            <label style={{ display: "flex", gap: 8, alignItems: "center", margin: "10px 0 0", fontSize: 12.5, color: T.ink, cursor: "pointer" }}>
+              <input type="checkbox" checked={upsert} onChange={(e) => setUpsert(e.target.checked)} />
+              Update existing projects when <code style={codeChip}>code</code> matches <span style={{ color: T.inkSoft }}>(otherwise every row is added as new)</span>
+            </label>
+            <div style={{ fontSize: 12.5, color: parsed.error ? "#A33D3D" : T.inkSoft, margin: "8px 0 0" }}>{csv.trim() ? (parsed.error || `Ready: ${parsed.creates.length} new${parsed.updates.length ? `, ${parsed.updates.length} to update (${parsed.updates.map((u) => u._code).join(", ")})` : ""}`) : "Waiting for CSV…"}</div>
             {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "8px 0 0" }}>{err}</p>}
-            <div style={{ display: "flex", gap: 8, marginTop: 16 }}><button onClick={submitCsv} disabled={busy || !parsed.projects.length} style={{ ...btnSolid, opacity: busy || !parsed.projects.length ? 0.5 : 1 }}>{busy ? "Importing…" : `Import ${parsed.projects.length || ""} project${parsed.projects.length === 1 ? "" : "s"}`}</button><button onClick={onClose} style={btnGhost}>Cancel</button></div>
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}><button onClick={submitCsv} disabled={busy || !total} style={{ ...btnSolid, opacity: busy || !total ? 0.5 : 1 }}>{busy ? "Importing…" : `Import ${total || ""} project${total === 1 ? "" : "s"}`}</button><button onClick={onClose} style={btnGhost}>Cancel</button></div>
           </>
         )}
       </div>

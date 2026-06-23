@@ -132,6 +132,12 @@ Nothing else in the code block — the user pastes it straight into **CSV upload
   - `openItems`: `Vendor API feasibility unvalidated | Segment field assumed populated`
 - Optional `code` column: include it to assign a specific code (e.g. `MS-05`); otherwise the
   app derives one from the **workstream** (e.g. `MS-05`). `dependsOn` references resolve against these codes.
+- **Updating existing projects (upsert):** CSV upload has an _"Update existing projects when
+  `code` matches"_ toggle (on by default). When on, any row whose `code` matches a project on
+  the board updates it in place instead of creating a duplicate, and **only the columns present
+  in your CSV are changed** — so to revise just a few fields, emit a partial CSV with `code`
+  plus the columns to change (e.g. `code,target,impact`). To force everything to be new, the
+  user turns the toggle off.
 
 ### Columns
 ```
