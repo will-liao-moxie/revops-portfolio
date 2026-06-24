@@ -98,6 +98,13 @@ function heatStyle(v, max) {
   const c = t > 0.66 ? { bg: "#C13434", fg: "#fff" } : t > 0.33 ? { bg: "#E0A21A", fg: "#3A2C05" } : { bg: "#2E8B57", fg: "#fff" };
   return { background: c.bg, color: c.fg };
 }
+// vs-capacity traffic light: green = comfortably under, amber = near (>75%), red = over capacity
+function capHeatStyle(v, cap) {
+  if (!v) return null;
+  const r = cap > 0 ? v / cap : 1;
+  const c = r > 1 ? { bg: "#C13434", fg: "#fff" } : r > 0.75 ? { bg: "#E0A21A", fg: "#3A2C05" } : { bg: "#2E8B57", fg: "#fff" };
+  return { background: c.bg, color: c.fg };
+}
 const TARGETS = ["TBD", "Q3 2026", "Q4 2026", "Q1 2027", "Q2 2027", "Q3 2027", "Q4 2027"];
 const QUARTERS = TARGETS.filter((t) => t !== "TBD");
 function targetRank(t) {
@@ -759,7 +766,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSaveOrg, onOpen }) 
     setCapSaving(true);
     try { await onSaveOrg(applyCapsToOrg(org, capDraftRef.current, capacities)); setCapDraft({}); } finally { setCapSaving(false); }
   };
-  const [colorMode, setColorMode] = useState("comparison"); // "comparison" (heatmap by load, default) | "cap" (vs capacity)
+  const [colorMode, setColorMode] = useState("cap"); // "cap" (vs capacity, default) | "comparison" (heatmap by relative load)
   const toggleManage = () => {
     if (managing && rosterDirty && !window.confirm("You have unsaved roster changes. Discard them?")) return;
     setManaging((m) => !m); setRosterDirty(false);
@@ -803,7 +810,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSaveOrg, onOpen }) 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
         <div>
           <h2 style={{ ...h2Style, marginBottom: 2 }}>Resourcing & allocation</h2>
-          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>{mode === "project" ? "Team roster × projects — each cell is that project's hours. The team column stays pinned; project columns scroll." : mode === "category" ? "Team roster × category — each cell sums a team's hours for that workstream, so you can see who carries each category." : "Team roster × quarter — each cell sums a team's hours for that quarter. Comparative coloring shades by relative load (green → amber → red); switch to vs capacity to flag cells over a team's hour cap."}</p>
+          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>{mode === "project" ? "Team roster × projects — each cell is that project's hours. The team column stays pinned; project columns scroll." : mode === "category" ? "Team roster × category — each cell sums a team's hours for that workstream, so you can see who carries each category." : "Team roster × quarter — each cell sums a team's hours for that quarter. vs-capacity coloring is a traffic light against each team's hour cap (green under, amber near, red over ⚠); switch to comparative to shade by relative load instead."}</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.mono, fontSize: 11.5, color: T.inkSoft }}>
           <button onClick={exportRoster} title="Download the team roster as CSV" style={btnGhost}>↓ Export roster</button>
@@ -872,16 +879,17 @@ function ResourceGroup({ group, rows, mode, colorMode, cellMax, projects, qStart
       <tr><td colSpan={ncols} style={{ ...FROZEN.team, padding: "10px 14px 4px", background: T.paper, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{group}</td></tr>
       {rows.map((r) => {
         const cap = capacities[r.label] ?? DEFAULT_CAP;
-        const cellStyle = (v) => (compare ? (heatStyle(v, cellMax) || {}) : null);
+        // comparative → heat by relative load; vs-capacity → traffic light by load vs this team's cap
+        const cellStyle = (v) => (compare ? heatStyle(v, cellMax) : capHeatStyle(v, cap)) || {};
         return (
           <tr key={r.label} style={{ borderTop: `1px solid ${T.hairlineSoft}` }}>
             <td style={{ ...FROZEN.team, background: T.surface, padding: "9px 14px", fontSize: 13, width: TEAM_W }}><span style={{ fontWeight: 600 }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</span>{r.lead && <span style={{ marginLeft: 8, fontSize: 11, color: T.inkSoft }}>{r.lead}{r.pm ? ` · PM ${r.pm}` : ""}</span>}</td>
             {!compare && <td style={{ ...FROZEN.cap, background: T.surface, textAlign: "center", padding: "0 8px" }}>{unlocked ? <CapInput value={cap} onCommit={(n) => onSetCapacity(r.label, n)} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}</td>}
             {mode === "project"
-              ? projects.map((p) => { const ws = wsMeta(p.workstream); const v = r.unitsBy[p.id]; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px", borderLeft: qStartIds && qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}>{v != null ? <span title={`${p.code} · ${p.targetWindow || "TBD"} · ${v}h`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: ws.soft, color: ws.color }) }}>{v}</span> : null}</td>; })
+              ? projects.map((p) => { const v = r.unitsBy[p.id]; const oc = !compare && v > cap; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px", borderLeft: qStartIds && qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}>{v != null ? <span title={`${p.code} · ${p.targetWindow || "TBD"} · ${v}h${!compare ? ` / ${cap} cap` : ""}`} style={{ ...chip, ...cellStyle(v) }}>{v}{oc ? " ⚠" : ""}</span> : null}</td>; })
               : mode === "category"
-                ? categories.map((c) => { const ws = wsMeta(c); const v = r.unitsByCat[c] || 0; return <td key={c} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={`${c} · ${v}h`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: ws.soft, color: ws.color }) }}>{v}</span> : null}</td>; })
-                : quarters.map((q) => { const v = r.unitsByQ[q] || 0; const oc = v > cap; return <td key={q} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={compare ? `${q} · ${v}h` : `${q} · ${v}/${cap}h`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: oc ? "#FBEAEA" : T.hairlineSoft, color: oc ? "#C0463E" : T.ink }) }}>{v}{!compare && oc ? " ⚠" : ""}</span> : null}</td>; })}
+                ? categories.map((c) => { const v = r.unitsByCat[c] || 0; const oc = !compare && v > cap; return <td key={c} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={`${c} · ${v}h${!compare ? ` / ${cap} cap` : ""}`} style={{ ...chip, ...cellStyle(v) }}>{v}{oc ? " ⚠" : ""}</span> : null}</td>; })
+                : quarters.map((q) => { const v = r.unitsByQ[q] || 0; const oc = !compare && v > cap; return <td key={q} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={compare ? `${q} · ${v}h` : `${q} · ${v}/${cap}h`} style={{ ...chip, ...cellStyle(v) }}>{v}{oc ? " ⚠" : ""}</span> : null}</td>; })}
           </tr>
         );
       })}
