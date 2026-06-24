@@ -547,6 +547,7 @@ function Matrix({ projects, onOpen }) {
 
 /* ---------- SEQUENCE (by target window, dependency arrows) ---------- */
 function Sequence({ projects, byId, onOpen }) {
+  const [showDeps, setShowDeps] = useState(true);
   if (!projects.length) return <Empty />;
   const quarters = Array.from(new Set(projects.map((p) => p.targetWindow || "TBD"))).sort((a, b) => targetRank(a) - targetRank(b));
   const qIndex = Object.fromEntries(quarters.map((q, i) => [q, i]));
@@ -571,7 +572,10 @@ function Sequence({ projects, byId, onOpen }) {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
         <h2 style={h2Style}>Sequence by workstream × quarter</h2>
-        <span style={{ fontSize: 12, color: T.inkSoft }}>Lanes are workstreams, columns are target quarters; arrows point from a prerequisite to what it unlocks.</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: T.inkSoft }}>Lanes are workstreams, columns are target quarters; arrows point from a prerequisite to what it unlocks.</span>
+          <button onClick={() => setShowDeps((v) => !v)} title="Toggle dependency arrows" style={{ fontFamily: T.body, fontSize: 12, fontWeight: 500, padding: "4px 11px", borderRadius: 999, border: `1px solid ${showDeps ? "#A33D3D" : T.hairline}`, background: showDeps ? "#FBE0DE" : T.surface, color: showDeps ? "#A33D3D" : T.inkSoft, whiteSpace: "nowrap" }}>{showDeps ? "→ Dependencies shown" : "Dependencies hidden"}</button>
+        </div>
       </div>
       <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12, overflowX: "auto" }}>
         <svg width={Math.max(width, 280)} height={height} style={{ display: "block" }} role="img" aria-label="Sequence by workstream and quarter">
@@ -592,7 +596,7 @@ function Sequence({ projects, byId, onOpen }) {
           {quarters.map((q, i) => <line key={"g" + q} x1={colX(i) - COL_GAP / 2} y1={TOP} x2={colX(i) - COL_GAP / 2} y2={height} stroke={T.hairlineSoft} />)}
           {quarters.map((q, i) => <text key={q} x={colX(i)} y={20} fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.inkSoft} letterSpacing="0.06em">{q.toUpperCase()}</text>)}
           {/* dependency arrows */}
-          {edges.map(([from, to], i) => {
+          {showDeps && edges.map(([from, to], i) => {
             const a = pos[from], b = pos[to]; const sameX = Math.abs(a.x - b.x) < 1;
             const sx = a.x + (b.x >= a.x ? NODE_W : 0), sy = a.y + NODE_H / 2;
             const ex = b.x + (b.x >= a.x ? 0 : NODE_W), ey = b.y + NODE_H / 2; const mx = (sx + ex) / 2;
