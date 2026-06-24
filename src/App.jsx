@@ -697,7 +697,14 @@ function Sequence({ projects, byId, onOpen }) {
 }
 
 /* ---------- RESOURCING ---------- */
-const TEAM_W = 300, CAP_W = 64;
+const TEAM_W = 300, CAP_W = 96;
+// commit-on-blur capacity input: free typing (incl. 3 digits) without per-keystroke clamping/saving
+function CapInput({ value, onCommit }) {
+  const [v, setV] = useState(String(value));
+  useEffect(() => { setV(String(value)); }, [value]);
+  const commit = () => { const n = Math.max(1, Math.round(Number(v) || 0) || 1); onCommit(n); setV(String(n)); };
+  return <input type="number" min="1" value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} style={{ width: 60, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "3px 6px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} />;
+}
 const FROZEN = { team: { position: "sticky", left: 0, zIndex: 2 }, cap: { position: "sticky", left: TEAM_W, zIndex: 2, borderRight: `1px solid ${T.hairline}` } };
 function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSaveOrg, onOpen }) {
   const [managing, setManaging] = useState(false);
@@ -780,7 +787,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
             )}
             <tr>
               <th style={{ ...thStyle, ...FROZEN.team, zIndex: 3, textAlign: "left", minWidth: TEAM_W, width: TEAM_W }}>Team / resource</th>
-              {colorMode === "cap" && <th style={{ ...thStyle, ...FROZEN.cap, zIndex: 3, width: CAP_W }}>Cap</th>}
+              {colorMode === "cap" && <th style={{ ...thStyle, ...FROZEN.cap, zIndex: 3, width: CAP_W, lineHeight: 1.15 }} title="Total capacity hours available per quarter">Capacity<br /><span style={{ fontWeight: 500, color: T.inkSoft }}>hrs/qtr</span></th>}
               {mode === "project"
                 ? projCols.map((p) => { const ws = wsMeta(p.workstream); return <th key={p.id} style={{ ...thStyle, borderLeft: qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}><button onClick={() => onOpen(p.id)} title={`${p.title} · ${p.targetWindow || "TBD"}`} style={{ background: "none", border: "none", color: ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em" }}>{p.code}</button></th>; })
                 : mode === "category"
@@ -810,7 +817,7 @@ function ResourceGroup({ group, rows, mode, colorMode, cellMax, projects, qStart
         return (
           <tr key={r.label} style={{ borderTop: `1px solid ${T.hairlineSoft}` }}>
             <td style={{ ...FROZEN.team, background: T.surface, padding: "9px 14px", fontSize: 13, width: TEAM_W }}><span style={{ fontWeight: 600 }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</span>{r.lead && <span style={{ marginLeft: 8, fontSize: 11, color: T.inkSoft }}>{r.lead}{r.pm ? ` · PM ${r.pm}` : ""}</span>}</td>
-            {!compare && <td style={{ ...FROZEN.cap, background: T.surface, textAlign: "center" }}>{unlocked ? <input type="number" min="1" value={cap} onChange={(e) => onSetCapacity(r.label, Math.max(1, Number(e.target.value) || 1))} style={{ width: 44, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "2px 4px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}</td>}
+            {!compare && <td style={{ ...FROZEN.cap, background: T.surface, textAlign: "center", padding: "0 8px" }}>{unlocked ? <CapInput value={cap} onCommit={(n) => onSetCapacity(r.label, n)} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}</td>}
             {mode === "project"
               ? projects.map((p) => { const ws = wsMeta(p.workstream); const v = r.unitsBy[p.id]; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px", borderLeft: qStartIds && qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}>{v != null ? <span title={`${p.code} · ${p.targetWindow || "TBD"} · ${v}h`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: ws.soft, color: ws.color }) }}>{v}</span> : null}</td>; })
               : mode === "category"
