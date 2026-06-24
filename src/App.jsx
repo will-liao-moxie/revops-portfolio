@@ -697,7 +697,7 @@ function Sequence({ projects, byId, onOpen }) {
             );
           })}
           {/* quarter column guides + headers (count + total impact + total effort) */}
-          {quarters.map((q, i) => <line key={"g" + q} x1={colX(i) - COL_GAP / 2} y1={TOP} x2={colX(i) - COL_GAP / 2} y2={height} stroke={T.hairlineSoft} />)}
+          {quarters.map((q, i) => i === 0 ? null : <line key={"g" + q} x1={colX(i) - COL_GAP / 2} y1={TOP} x2={colX(i) - COL_GAP / 2} y2={height} stroke={T.hairlineSoft} />)}
           {quarters.map((q, i) => (
             <g key={q}>
               <text x={colX(i)} y={16} fontSize="11" fontFamily={T.mono} fontWeight="700" fill={T.ink} letterSpacing="0.06em">{q.toUpperCase()}</text>
