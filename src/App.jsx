@@ -63,6 +63,10 @@ function nextCode(ws, projects, selfId) {
 /* effort = single cost measure, XS–XL = 1–5 work units */
 const EFFORTS = ["XS", "S", "M", "L", "XL"];
 const EFFORT_POINTS = { XS: 1, S: 2, M: 3, L: 4, XL: 5 };
+// resourcing runs on hours; each effort size maps to an hour estimate
+const EFFORT_HOURS = { XS: 10, S: 20, M: 40, L: 60, XL: 80 };
+// map an arbitrary hour figure back to the nearest size bucket (timeline CSV uses hours)
+function hoursToEffort(h) { const n = Number(h); if (!n) return ""; let best = "M", bd = Infinity; for (const e of EFFORTS) { const d = Math.abs(EFFORT_HOURS[e] - n); if (d < bd) { bd = d; best = e; } } return best; }
 const EFFORT_LABEL = { XS: "Extra-small", S: "Small", M: "Medium", L: "Large", XL: "Extra-large" };
 /* traffic-light scale: low effort = green, high effort = red */
 const EFFORT_COLOR = {
@@ -86,7 +90,7 @@ const DELIV_TYPE = {
   optional: { color: "#C28A12", soft: "#FBF1D6", label: "Optional (stretch)" },
 };
 const delivType = (stretch) => (stretch ? DELIV_TYPE.optional : DELIV_TYPE.required);
-const DEFAULT_CAP = 6;
+const DEFAULT_CAP = 80; // hours per team per quarter (editable)
 // comparative traffic-light heatmap: relative to the grid max, light load = green, mid = amber, heavy = red
 function heatStyle(v, max) {
   if (!v) return null;
@@ -186,13 +190,13 @@ function normName(s) { return (s || "").toLowerCase().trim().replace(/\s+/g, " "
 function normDel(s) { return (s || "").toLowerCase().trim().replace(/\s+/g, " "); }
 function resourceNames(resource) { return new Set([normName(resource.label), normName(resource.lead)].filter(Boolean)); }
 function matchesResource(resource, who) { return resourceNames(resource).has(normName(who)); }
-function roleEffort(r) { return EFFORT_POINTS[r && r.effort] || EFFORT_POINTS.M; }
+function roleEffort(r) { return EFFORT_HOURS[r && r.effort] || EFFORT_HOURS.M; }
 function quarterOf(start) { const idx = parseStart(start); return idx == null ? "TBD" : weekLabel(idx).q; }
 // A project's work assignments drive Resourcing. If it has a scheduled timeline (Gantt), those
 // tasks — owner + effort + the quarter each runs in — are the source of truth; otherwise fall
 // back to the Team & resourcing roles (project's target quarter).
 function projectAssignments(p) {
-  if ((p.schedule || []).length) return p.schedule.map((t) => ({ owner: t.owner || "", pts: EFFORT_POINTS[t.effort] || EFFORT_POINTS.M, quarter: quarterOf(t.start) }));
+  if ((p.schedule || []).length) return p.schedule.map((t) => ({ owner: t.owner || "", pts: EFFORT_HOURS[t.effort] || EFFORT_HOURS.M, quarter: quarterOf(t.start) }));
   return (p.roles || []).map((r) => ({ owner: r.who || "", pts: roleEffort(r), quarter: p.targetWindow || "TBD" }));
 }
 function resourceProjects(resource, projects) { return projects.filter((p) => projectAssignments(p).some((a) => matchesResource(resource, a.owner))); }
@@ -248,10 +252,6 @@ function GanttLegend() {
         <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: "0.06em" }}>DELIVERABLE</span>
         <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><span style={dot(DELIV_TYPE.required.color)} />{DELIV_TYPE.required.label}</span>
         <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><span style={dot(DELIV_TYPE.optional.color)} />{DELIV_TYPE.optional.label}</span>
-      </span>
-      <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-        <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: "0.06em" }}>EFFORT</span>
-        {EFFORTS.map((e) => <EffortChip key={e} effort={e} />)}
       </span>
     </div>
   );
@@ -746,14 +746,14 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
         <div>
           <h2 style={{ ...h2Style, marginBottom: 2 }}>Resourcing & allocation</h2>
-          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>{mode === "project" ? "Team roster × projects — each cell is that project's work units. The team column stays pinned; project columns scroll." : mode === "category" ? "Team roster × category — each cell sums a team's work units for that workstream, so you can see who carries each category." : "Team roster × quarter — each cell sums a team's work units for that quarter. Comparative coloring shades by relative load (green → amber → red); switch to vs capacity to flag cells over a team's cap."}</p>
+          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>{mode === "project" ? "Team roster × projects — each cell is that project's hours. The team column stays pinned; project columns scroll." : mode === "category" ? "Team roster × category — each cell sums a team's hours for that workstream, so you can see who carries each category." : "Team roster × quarter — each cell sums a team's hours for that quarter. Comparative coloring shades by relative load (green → amber → red); switch to vs capacity to flag cells over a team's hour cap."}</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.mono, fontSize: 11.5, color: T.inkSoft }}>
           <button onClick={exportRoster} title="Download the team roster as CSV" style={btnGhost}>↓ Export roster</button>
           {unlocked && <button onClick={() => setShowRosterImport(true)} title="Replace the whole roster from a CSV" style={btnGhost}>↑ Import roster</button>}
           {unlocked && <button onClick={toggleManage} style={btnGhost}>{managing ? "Done" : "✎ Manage teams"}</button>}
-          <span style={{ letterSpacing: "0.06em" }}>WORK UNITS</span>
-          {EFFORTS.map((s) => <span key={s} style={{ padding: "2px 7px", borderRadius: 6, background: T.hairlineSoft, color: T.ink, fontWeight: 700 }}>{s}={EFFORT_POINTS[s]}</span>)}
+          <span style={{ letterSpacing: "0.06em" }}>HOURS</span>
+          {EFFORTS.map((s) => <span key={s} style={{ padding: "2px 7px", borderRadius: 6, background: T.hairlineSoft, color: T.ink, fontWeight: 700 }}>{s}={EFFORT_HOURS[s]}h</span>)}
         </div>
       </div>
 
@@ -812,10 +812,10 @@ function ResourceGroup({ group, rows, mode, colorMode, cellMax, projects, qStart
             <td style={{ ...FROZEN.team, background: T.surface, padding: "9px 14px", fontSize: 13, width: TEAM_W }}><span style={{ fontWeight: 600 }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</span>{r.lead && <span style={{ marginLeft: 8, fontSize: 11, color: T.inkSoft }}>{r.lead}{r.pm ? ` · PM ${r.pm}` : ""}</span>}</td>
             {!compare && <td style={{ ...FROZEN.cap, background: T.surface, textAlign: "center" }}>{unlocked ? <input type="number" min="1" value={cap} onChange={(e) => onSetCapacity(r.label, Math.max(1, Number(e.target.value) || 1))} style={{ width: 44, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "2px 4px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}</td>}
             {mode === "project"
-              ? projects.map((p) => { const ws = wsMeta(p.workstream); const v = r.unitsBy[p.id]; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px", borderLeft: qStartIds && qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}>{v != null ? <span title={`${p.code} · ${p.targetWindow || "TBD"} · ${v} units`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: ws.soft, color: ws.color }) }}>{v}</span> : null}</td>; })
+              ? projects.map((p) => { const ws = wsMeta(p.workstream); const v = r.unitsBy[p.id]; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px", borderLeft: qStartIds && qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}>{v != null ? <span title={`${p.code} · ${p.targetWindow || "TBD"} · ${v}h`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: ws.soft, color: ws.color }) }}>{v}</span> : null}</td>; })
               : mode === "category"
-                ? categories.map((c) => { const ws = wsMeta(c); const v = r.unitsByCat[c] || 0; return <td key={c} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={`${c} · ${v} units`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: ws.soft, color: ws.color }) }}>{v}</span> : null}</td>; })
-                : quarters.map((q) => { const v = r.unitsByQ[q] || 0; const oc = v > cap; return <td key={q} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={compare ? `${q} · ${v} units` : `${q} · ${v}/${cap}`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: oc ? "#FBEAEA" : T.hairlineSoft, color: oc ? "#C0463E" : T.ink }) }}>{v}{!compare && oc ? " ⚠" : ""}</span> : null}</td>; })}
+                ? categories.map((c) => { const ws = wsMeta(c); const v = r.unitsByCat[c] || 0; return <td key={c} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={`${c} · ${v}h`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: ws.soft, color: ws.color }) }}>{v}</span> : null}</td>; })
+                : quarters.map((q) => { const v = r.unitsByQ[q] || 0; const oc = v > cap; return <td key={q} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={compare ? `${q} · ${v}h` : `${q} · ${v}/${cap}h`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: oc ? "#FBEAEA" : T.hairlineSoft, color: oc ? "#C0463E" : T.ink }) }}>{v}{!compare && oc ? " ⚠" : ""}</span> : null}</td>; })}
           </tr>
         );
       })}
@@ -1054,7 +1054,7 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
             </>
           ) : (
             <div style={{ background: T.paper, border: `1px dashed ${T.hairline}`, borderRadius: 10, padding: "16px 18px", fontSize: 12.5, color: T.inkSoft, lineHeight: 1.55 }}>
-              No timeline yet. {unlocked ? <>Import a CSV with one row per deliverable — columns <code style={codeChip}>deliverable, owner, start, weeks</code> (optional <code style={codeChip}>effort</code>), <code style={codeChip}>start</code> like <code style={codeChip}>Q3 2026 W2</code>.</> : "Unlock editing to import a timeline."}
+              No timeline yet. {unlocked ? <>Import a CSV with one row per deliverable — columns <code style={codeChip}>deliverable, owner, start, weeks</code> (optional <code style={codeChip}>hours</code>), <code style={codeChip}>start</code> like <code style={codeChip}>Q3 2026 W2</code>.</> : "Unlock editing to import a timeline."}
               {(committed.length + stretch.length) > 0 && <div style={{ marginTop: 8 }}><strong style={{ color: T.ink }}>Deliverables to schedule:</strong> {[...committed, ...stretch].map((d) => d.text).join(" · ")}</div>}
             </div>
           )}
@@ -1356,9 +1356,9 @@ function csvToOrg(text) {
   return { org, count, error: count ? "" : "No valid team rows found." };
 }
 function timelineToCsv(projects) {
-  const cols = ["projectCode", "deliverable", "owner", "start", "weeks", "effort"];
+  const cols = ["projectCode", "deliverable", "owner", "start", "weeks", "hours"];
   const lines = [cols.join(",")];
-  projects.forEach((p) => (p.schedule || []).forEach((t) => { lines.push([p.code, t.deliverable, t.owner || "", t.start || "", t.weeks || "", t.effort || "M"].map(csvCell).join(",")); }));
+  projects.forEach((p) => (p.schedule || []).forEach((t) => { lines.push([p.code, t.deliverable, t.owner || "", t.start || "", t.weeks || "", EFFORT_HOURS[t.effort] || EFFORT_HOURS.M].map(csvCell).join(",")); }));
   return lines.join("\n");
 }
 
@@ -1383,7 +1383,7 @@ function weekDate(idx) {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 function buildPlanToCsv(projects, org) {
-  const cols = ["projectCode", "deliverable", "stretch", "workstream", "quarter", "projectEffort", "candidateOwners", "dependsOn", "owner", "start", "weeks", "effort"];
+  const cols = ["projectCode", "deliverable", "stretch", "workstream", "quarter", "projectEffort", "candidateOwners", "dependsOn", "owner", "start", "weeks", "hours"];
   const byId = Object.fromEntries(projects.map((p) => [p.id, p]));
   const lines = [cols.join(",")];
   projects.forEach((p) => {
@@ -1408,8 +1408,9 @@ function csvToSchedule(text, projects) {
     const code = at(r, "projectcode"); const owner = at(r, "owner"); const start = at(r, "start"); const weeks = at(r, "weeks");
     if (!code || !owner || !start || !weeks) continue; // only scheduled rows
     const id = codeToId[code.toLowerCase()]; if (!id) continue;
-    const eff = (at(r, "effort") || "M").toUpperCase();
-    (byProjectId[id] = byProjectId[id] || []).push({ deliverable: at(r, "deliverable"), owner, start, weeks: Math.max(1, Number(weeks) || 1), effort: EFFORTS.includes(eff) ? eff : "M" });
+    const hrs = at(r, "hours"); const eff0 = (at(r, "effort") || "").toUpperCase();
+    const effort = hrs ? (hoursToEffort(hrs) || "M") : (EFFORTS.includes(eff0) ? eff0 : "M");
+    (byProjectId[id] = byProjectId[id] || []).push({ deliverable: at(r, "deliverable"), owner, start, weeks: Math.max(1, Number(weeks) || 1), effort });
     count++;
   }
   return { byProjectId, count, error: count ? "" : "No fully-scheduled rows found (need owner, start, and weeks filled in)." };
@@ -1437,8 +1438,9 @@ function parseTasksCsv(text) {
     const r = rows[k]; const del = at(r, "deliverable"), owner = at(r, "owner"), start = at(r, "start"), weeks = at(r, "weeks");
     if (!del || !start || !weeks) continue;
     if (parseStart(start) == null) continue;
-    const eff = (at(r, "effort") || "M").toUpperCase();
-    tasks.push({ deliverable: del, owner, start, weeks: Math.max(1, Number(weeks) || 1), effort: EFFORTS.includes(eff) ? eff : "M" });
+    const hrs = at(r, "hours"); const eff0 = (at(r, "effort") || "").toUpperCase();
+    const effort = hrs ? (hoursToEffort(hrs) || "M") : (EFFORTS.includes(eff0) ? eff0 : "M");
+    tasks.push({ deliverable: del, owner, start, weeks: Math.max(1, Number(weeks) || 1), effort });
   }
   return { tasks, error: tasks.length ? "" : "No valid rows (need deliverable, start like 'Q3 2026 W2', and weeks)." };
 }
@@ -1487,8 +1489,8 @@ function TimelineEditor({ items, deliverables, org, onCommit }) {
             <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>{lbl("WEEKS")}
               <input type="number" min={1} value={Math.max(1, Number(t.weeks) || 1)} onChange={(e) => upd(i, { weeks: Math.max(1, Number(e.target.value) || 1) })} title="Duration in weeks — may run past the quarter into later ones" style={{ ...sel, width: 58 }} />
             </label>
-            <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>{lbl("EFFORT")}
-              <select value={t.effort || "M"} onChange={(e) => upd(i, { effort: e.target.value })} style={sel}>{EFFORTS.map((x) => <option key={x} value={x}>{x}</option>)}</select>
+            <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>{lbl("HOURS")}
+              <select value={t.effort || "M"} onChange={(e) => upd(i, { effort: e.target.value })} title="Estimated hours — drives this team's load in Resourcing" style={sel}>{EFFORTS.map((x) => <option key={x} value={x}>{EFFORT_HOURS[x]}h</option>)}</select>
             </label>
             <button onClick={() => commit(list.filter((_, j) => j !== i))} style={{ ...xBtn, marginBottom: 5 }} aria-label="Remove">✕</button>
           </div>
@@ -1536,11 +1538,10 @@ function GanttGrid({ groups, org, onOpen, labelHeader = "Deliverable" }) {
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       <span style={{ width: 8, height: 8, borderRadius: 3, background: dt.color, flexShrink: 0 }} />
                       <span style={{ fontSize: 12.5, fontWeight: 600, color: T.ink, lineHeight: 1.3 }}>{t.deliverable}</span>
-                      <EffortChip effort={t.effort} />
                     </div>
                     {ownerPath && <div style={{ fontSize: 11, color: t.ws.color, lineHeight: 1.3, marginLeft: 14 }}>{ownerPath}</div>}
                   </button>
-                  <div title={`${t.deliverable}${ownerPath ? " · " + ownerPath : ""} · ${t.effort || "M"} · ${weekDate(t.idx)} → ${weekDate(t.idx + t.weeks - 1)} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 20, background: t.ws.soft, border: `1px solid ${t.ws.color}`, borderLeft: `3px solid ${t.ws.color}`, borderRadius: 5, margin: "5px 2px" }} />
+                  <div title={`${t.deliverable}${ownerPath ? " · " + ownerPath : ""} · ${weekDate(t.idx)} → ${weekDate(t.idx + t.weeks - 1)} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 20, background: t.ws.soft, border: `1px solid ${t.ws.color}`, borderLeft: `3px solid ${t.ws.color}`, borderRadius: 5, margin: "5px 2px" }} />
                 </div>
               );
             })}
@@ -1644,11 +1645,10 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
                         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                           <span style={{ width: 8, height: 8, borderRadius: 3, background: dt.color, flexShrink: 0 }} />
                           <span style={{ fontSize: 12, fontWeight: 600, color: T.ink, lineHeight: 1.3 }}>{t.deliverable}</span>
-                          <EffortChip effort={t.effort} />
                         </div>
                         {ownerPath && <div style={{ fontSize: 10.5, color: g.ws.color, lineHeight: 1.3, marginLeft: 14 }}>{ownerPath}</div>}
                       </button>
-                      <div title={`${t.deliverable}${ownerPath ? " · " + ownerPath : ""} · ${t.effort || "M"} · ${weekDate(t.idx)} → ${weekDate(t.idx + t.weeks - 1)} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 16, background: g.ws.soft, border: `1px solid ${g.ws.color}`, borderLeft: `3px solid ${g.ws.color}`, borderRadius: 4, margin: "4px 2px" }} />
+                      <div title={`${t.deliverable}${ownerPath ? " · " + ownerPath : ""} · ${weekDate(t.idx)} → ${weekDate(t.idx + t.weeks - 1)} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 16, background: g.ws.soft, border: `1px solid ${g.ws.color}`, borderLeft: `3px solid ${g.ws.color}`, borderRadius: 4, margin: "4px 2px" }} />
                     </div>
                     );
                   })}
@@ -1685,7 +1685,7 @@ function TimelineImportModal({ heading, deliverables, onClose, onApply }) {
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, width: "min(640px, 100%)", maxHeight: "88vh", overflowY: "auto", padding: 26, fontFamily: T.body }}>
         <h2 style={{ ...h2Style, marginTop: 0 }}>{heading || "Import timeline"}</h2>
-        <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "6px 0 14px" }}>Paste CSV or upload a file. Columns: <code style={codeChip}>deliverable, owner, start, weeks</code> (optional <code style={codeChip}>effort</code> XS–XL) — <code style={codeChip}>start</code> like <code style={codeChip}>Q3 2026 W2</code> (W1–W13 in a quarter), <code style={codeChip}>weeks</code> = duration. The <code style={codeChip}>owner</code> should be a roster team or its lead — it drives that team's load in Resourcing; <code style={codeChip}>effort</code> sizes it (defaults M).</p>
+        <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "6px 0 14px" }}>Paste CSV or upload a file. Columns: <code style={codeChip}>deliverable, owner, start, weeks</code> (optional <code style={codeChip}>hours</code> 10/20/40/60/80) — <code style={codeChip}>start</code> like <code style={codeChip}>Q3 2026 W2</code> (W1–W13 in a quarter), <code style={codeChip}>weeks</code> = duration. The <code style={codeChip}>owner</code> should be a roster team or its lead — it drives that team's hours in Resourcing.</p>
         <label style={lbl}>UPLOAD .CSV</label>
         <input type="file" accept=".csv,text/csv" onChange={onFile} style={{ fontSize: 12.5, marginBottom: 10 }} />
         <label style={lbl}>OR PASTE CSV</label>

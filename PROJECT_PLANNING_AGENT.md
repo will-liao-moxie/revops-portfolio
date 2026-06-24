@@ -62,12 +62,13 @@ Each project is one row. Fields:
 There is **no `status` field** and **no `size` field** — `effort` (XS–XL) is the only cost
 measure, and lifecycle status is not tracked.
 
-### Effort legend (work units)
-`XS = 1`, `S = 2`, `M = 3`, `L = 4`, `XL = 5`. Effort is the load the project places on each team
-it touches as a whole; it's the x-axis of the priority matrix. NOTE this is distinct from each
-team's **per-resource effort** inside the `team` list — the Resourcing view sums those per-team
-efforts into allocation. Set the project `effort` for prioritization and each team's effort for
-how much that specific team does.
+### Effort legend (prioritization) and hours (resourcing)
+Project-level `effort` `XS = 1`, `S = 2`, `M = 3`, `L = 4`, `XL = 5` is the load the project places
+on each team it touches as a whole; it's the x-axis of the priority matrix (prioritization only).
+Each team's **per-resource effort** inside the `team` list (and each timeline deliverable's size) is
+what the **Resourcing view** sums — and Resourcing is expressed in **hours**: `XS = 10h, S = 20h,
+M = 40h, L = 60h, XL = 80h`. Set the project `effort` for prioritization and each team's effort/hours
+for how much that specific team does.
 
 ### Resourcing roster (the source of truth for who can be staffed)
 The **Export roster** CSV (`group, team, parent, lead, pm`) lists every staffable team. **A team
@@ -79,9 +80,9 @@ fuzzy keywords. So:
 - Put internal teams and external contractors in the **same** `team` list.
 - If a project needs a team that isn't in the roster, say so explicitly and recommend the user add
   it via **Manage teams** — don't silently invent a team name that won't match.
-- Mind **capacity**: each team has an effort-point capacity; if naming a team on this project would
-  push its total allocation over capacity (sum its effort across the projects in the board export),
-  flag the over-commitment to the user.
+- Mind **capacity**: each team has an hours capacity per quarter; if naming a team on this project
+  would push its total allocation over capacity (sum its hours across the projects in the board
+  export), flag the over-commitment to the user.
 
 ---
 
@@ -177,19 +178,20 @@ their exact column shapes so anything you produce pastes/imports cleanly:
 - **Resourcing roster** — Resourcing tab → **Export roster**: `group, team, parent, lead, pm`. The
   authoritative list of staffable teams/people; every `owner` and `team` name must come from here.
 - **Timeline plan** — Timeline tab → **Export timeline** (all projects) or a project doc → **Export**
-  (one project): `projectCode, deliverable, owner, start, weeks, effort`. The current per-deliverable
-  schedule; edit and re-import to adjust the Gantt.
+  (one project): `projectCode, deliverable, owner, start, weeks, hours`. The current per-deliverable
+  schedule; edit and re-import to adjust the Gantt. (`hours` ∈ 10/20/40/60/80; rounds to the nearest bucket.)
 - **Build-plan scaffold** — Timeline tab → **Export build-plan scaffold**: one row per deliverable with
-  `candidateOwners` pre-filled and `owner/start/weeks/effort` blank — a convenient starting point for sequencing.
+  `candidateOwners` pre-filled and `owner/start/weeks/hours` blank — a convenient starting point for sequencing.
 
 ## Timeline / Gantt payload (per-project)
 
 The Gantt is the **next level of resourcing** — every project **deliverable** placed on a weekly
-timeline with a clear owner and effort. Each project doc renders its deliverables as a weekly Gantt
-(owner as the subtitle), they feed the Resourcing views (owner + effort + the quarter from `start`),
-and they roll up into the app's **Timeline** view. To populate a
-project's timeline, generate a CSV and the user imports it from that project's doc (**Import
-timeline CSV**).
+timeline with a clear owner and an hours estimate. Each project doc renders its deliverables as a
+weekly Gantt (owner as the subtitle), they feed the Resourcing views (owner + hours + the quarter
+from `start`), and they roll up into the app's **Timeline** view. The Gantt shows no effort/size
+chips — sizing is expressed in **hours** (`hours` per deliverable: XS≈10, S≈20, M≈40, L≈60, XL≈80).
+To populate a project's timeline, generate a CSV and the user imports it from that project's doc
+(**Import timeline CSV**) — columns `deliverable, owner, start, weeks, hours`.
 
 **Columns:** `deliverable, owner, start, weeks` (optional `effort` XS–XL)
 - `deliverable` — **must exactly match one of the project's deliverables** (the rows you wrote in
