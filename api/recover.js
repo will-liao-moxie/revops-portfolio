@@ -23,14 +23,21 @@ export default async function handler(req, res) {
 
     if (req.method === "GET") {
       const out = [];
-      for (const b of stateBlobs.slice(0, 50)) {
-        try { const r = await fetch(b.url, { cache: "no-store" }); const j = await r.json(); out.push({ pathname: b.pathname, ts: ver(b), projects: (j.projects || []).length, settingsKeys: Object.keys(j.settings || {}).length }); }
-        catch { out.push({ pathname: b.pathname, ts: ver(b), error: true }); }
+      for (const b of stateBlobs.slice(0, 12)) {
+        const row = { pathname: b.pathname, ts: ver(b), url: b.url };
+        try { const r = await fetch(b.url, { cache: "no-store" }); row.status = r.status; if (r.ok) { const j = await r.json(); row.projects = (j.projects || []).length; row.settingsKeys = Object.keys(j.settings || {}).length; } else { row.body = (await r.text()).slice(0, 120); } }
+        catch (e) { row.fetchError = String(e.message || e); }
+        out.push(row);
       }
-      // also peek at legacy split stores
-      let legacyProjects = 0;
-      try { const lp = await versions("projects-v/"); if (lp.length) { const r = await fetch(lp[0].url, { cache: "no-store" }); const j = await r.json(); legacyProjects = (j || []).length; } } catch { /* ignore */ }
-      return res.status(200).json({ stateVersions: out, legacyProjectsNewest: legacyProjects });
+      const legacyP = await versions("projects-v/");
+      const legacyRows = [];
+      for (const b of legacyP.slice(0, 6)) {
+        const row = { pathname: b.pathname, ts: ver(b) };
+        try { const r = await fetch(b.url, { cache: "no-store" }); row.status = r.status; if (r.ok) { const j = await r.json(); row.projects = (j || []).length; } }
+        catch (e) { row.fetchError = String(e.message || e); }
+        legacyRows.push(row);
+      }
+      return res.status(200).json({ stateCount: stateBlobs.length, stateVersions: out, legacyProjectsVersions: legacyRows });
     }
 
     if (req.method === "POST") {
