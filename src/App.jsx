@@ -72,6 +72,14 @@ const EFFORT_COLOR = {
   L:  { soft: "#FBE6D4", color: "#C5651C" },
   XL: { soft: "#FADCDC", color: "#C13434" },
 };
+/* impact scale 1–5, color-coded (high impact = green, low = red) */
+const IMPACT_COLOR = {
+  5: { soft: "#E3F4E8", color: "#1E8A4C" },
+  4: { soft: "#E9F4DC", color: "#5C8A23" },
+  3: { soft: "#FBF1D6", color: "#B0860F" },
+  2: { soft: "#FBE6D4", color: "#C5651C" },
+  1: { soft: "#FADCDC", color: "#C13434" },
+};
 /* deliverable type: required (committed) vs optional (stretch) */
 const DELIV_TYPE = {
   required: { color: "#1E8A4C", soft: "#E3F4E8", label: "Required" },
@@ -240,6 +248,10 @@ function GanttLegend() {
       </span>
     </div>
   );
+}
+function ImpactChip({ impact }) {
+  const i = impact || 3; const c = IMPACT_COLOR[i] || IMPACT_COLOR[3];
+  return <span title={`Impact ${i}/5`} style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 6, background: c.soft, color: c.color, letterSpacing: "0.04em" }}>Imp {i}</span>;
 }
 function initials(name) { return (name || "").split(/[\s·]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase(); }
 function Avatar({ name, color }) { return <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 999, background: (color || T.inkSoft) + "22", color: color || T.inkSoft, fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>{initials(name)}</span>; }
@@ -546,17 +558,26 @@ function Matrix({ projects, onOpen }) {
 }
 
 /* ---------- SEQUENCE (by target window, dependency arrows) ---------- */
+const SEQ_GROUPS = {
+  workstream: { label: "Workstream", keyOf: (p) => p.workstream || "Other", order: (ls) => ls, color: (l) => wsMeta(l).color, name: (l) => l },
+  effort: { label: "Effort", keyOf: (p) => p.effort || "M", order: (ls) => EFFORTS.filter((e) => ls.includes(e)), color: (l) => (EFFORT_COLOR[l] || EFFORT_COLOR.M).color, name: (l) => `${l} · ${EFFORT_LABEL[l]}` },
+  impact: { label: "Impact", keyOf: (p) => p.impact || 3, order: (ls) => [5, 4, 3, 2, 1].filter((i) => ls.includes(i)), color: (l) => (IMPACT_COLOR[l] || IMPACT_COLOR[3]).color, name: (l) => `Impact ${l}` },
+};
 function Sequence({ projects, byId, onOpen }) {
   const [showDeps, setShowDeps] = useState(true);
+  const [groupBy, setGroupBy] = useState("workstream");
   if (!projects.length) return <Empty />;
+  const g = SEQ_GROUPS[groupBy];
   const quarters = Array.from(new Set(projects.map((p) => p.targetWindow || "TBD"))).sort((a, b) => targetRank(a) - targetRank(b));
   const qIndex = Object.fromEntries(quarters.map((q, i) => [q, i]));
-  const qCount = {}; projects.forEach((p) => { const q = p.targetWindow || "TBD"; qCount[q] = (qCount[q] || 0) + 1; });
-  const lanes = []; projects.forEach((p) => { const w = p.workstream || "Other"; if (!lanes.includes(w)) lanes.push(w); });
+  const qCount = {}, qImpact = {}, qEffort = {};
+  projects.forEach((p) => { const q = p.targetWindow || "TBD"; qCount[q] = (qCount[q] || 0) + 1; qImpact[q] = (qImpact[q] || 0) + (Number(p.impact) || 0); qEffort[q] = (qEffort[q] || 0) + (EFFORT_POINTS[p.effort] || EFFORT_POINTS.M); });
+  const laneKeys = []; projects.forEach((p) => { const k = g.keyOf(p); if (!laneKeys.includes(k)) laneKeys.push(k); });
+  const lanes = g.order(laneKeys);
   const cell = {}; lanes.forEach((w) => { cell[w] = {}; quarters.forEach((q) => { cell[w][q] = []; }); });
-  projects.forEach((p) => cell[p.workstream || "Other"][p.targetWindow || "TBD"].push(p));
+  projects.forEach((p) => cell[g.keyOf(p)][p.targetWindow || "TBD"].push(p));
 
-  const NODE_W = 196, NODE_H = 74, V_GAP = 12, COL_GAP = 54, TOP = 40, GUTTER = 150, PADY = 14;
+  const NODE_W = 196, NODE_H = 90, V_GAP = 12, COL_GAP = 54, TOP = 50, GUTTER = 150, PADY = 14;
   const colX = (i) => GUTTER + i * (NODE_W + COL_GAP);
   const laneRows = {}; lanes.forEach((w) => { laneRows[w] = Math.max(1, ...quarters.map((q) => cell[w][q].length)); });
   const laneY = {}, laneH = {}; let acc = TOP;
@@ -567,35 +588,42 @@ function Sequence({ projects, byId, onOpen }) {
   const height = acc + 6;
   const edges = [];
   projects.forEach((p) => (p.dependsOn || []).forEach((d) => { if (pos[d.id] && pos[p.id]) edges.push([d.id, p.id]); }));
-  const trunc = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+  const trunc = (s, n) => { const str = String(s); return str.length > n ? str.slice(0, n - 1) + "…" : str; };
+  const tab = (k) => <button key={k} onClick={() => setGroupBy(k)} style={{ fontFamily: T.body, fontSize: 12, fontWeight: groupBy === k ? 600 : 500, padding: "4px 11px", borderRadius: 999, border: `1px solid ${groupBy === k ? T.ink : T.hairline}`, background: groupBy === k ? T.ink : T.surface, color: groupBy === k ? "#fff" : T.inkSoft }}>{SEQ_GROUPS[k].label}</button>;
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-        <h2 style={h2Style}>Sequence by workstream × quarter</h2>
+        <h2 style={h2Style}>Sequence by {g.label.toLowerCase()} × quarter</h2>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, color: T.inkSoft }}>Lanes are workstreams, columns are target quarters; arrows point from a prerequisite to what it unlocks.</span>
+          <span style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: T.inkSoft }}>GROUP BY</span>
+          {["workstream", "effort", "impact"].map(tab)}
           <button onClick={() => setShowDeps((v) => !v)} title="Toggle dependency arrows" style={{ fontFamily: T.body, fontSize: 12, fontWeight: 500, padding: "4px 11px", borderRadius: 999, border: `1px solid ${showDeps ? "#A33D3D" : T.hairline}`, background: showDeps ? "#FBE0DE" : T.surface, color: showDeps ? "#A33D3D" : T.inkSoft, whiteSpace: "nowrap" }}>{showDeps ? "→ Dependencies shown" : "Dependencies hidden"}</button>
         </div>
       </div>
       <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12, overflowX: "auto" }}>
-        <svg width={Math.max(width, 280)} height={height} style={{ display: "block" }} role="img" aria-label="Sequence by workstream and quarter">
+        <svg width={Math.max(width, 280)} height={height} style={{ display: "block" }} role="img" aria-label={`Sequence by ${g.label} and quarter`}>
           <defs><marker id="seqArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#A33D3D" /></marker></defs>
           {/* lane bands + labels */}
           {lanes.map((w, li) => {
-            const ws = wsMeta(w);
+            const lc = g.color(w);
             return (
-              <g key={w}>
+              <g key={String(w)}>
                 {li % 2 === 1 && <rect x={0} y={laneY[w]} width={width} height={laneH[w]} fill={T.paper} />}
-                <rect x={0} y={laneY[w]} width={4} height={laneH[w]} fill={ws.color} />
+                <rect x={0} y={laneY[w]} width={4} height={laneH[w]} fill={lc} />
                 <line x1={0} y1={laneY[w]} x2={width} y2={laneY[w]} stroke={T.hairline} />
-                <text x={12} y={laneY[w] + laneH[w] / 2 + 4} fontSize="11.5" fontFamily={T.body} fontWeight="700" fill={ws.color}>{trunc(w, 18)}</text>
+                <text x={12} y={laneY[w] + laneH[w] / 2 + 4} fontSize="11.5" fontFamily={T.body} fontWeight="700" fill={lc}>{trunc(g.name(w), 18)}</text>
               </g>
             );
           })}
-          {/* quarter column guides + headers */}
+          {/* quarter column guides + headers (count + total impact + total effort) */}
           {quarters.map((q, i) => <line key={"g" + q} x1={colX(i) - COL_GAP / 2} y1={TOP} x2={colX(i) - COL_GAP / 2} y2={height} stroke={T.hairlineSoft} />)}
-          {quarters.map((q, i) => <text key={q} x={colX(i)} y={20} fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.inkSoft} letterSpacing="0.06em">{q.toUpperCase()} <tspan fontWeight="700" fill={T.ink}>· {qCount[q]}</tspan></text>)}
+          {quarters.map((q, i) => (
+            <g key={q}>
+              <text x={colX(i)} y={16} fontSize="11" fontFamily={T.mono} fontWeight="700" fill={T.ink} letterSpacing="0.06em">{q.toUpperCase()}</text>
+              <text x={colX(i)} y={33} fontSize="10.5" fontFamily={T.body} fill={T.inkSoft}>{qCount[q]} proj · <tspan fontWeight="700" fill="#1E8A4C">{qImpact[q]}</tspan> impact · <tspan fontWeight="700" fill="#C5651C">{qEffort[q]}</tspan> effort</text>
+            </g>
+          ))}
           {/* dependency arrows */}
           {showDeps && edges.map(([from, to], i) => {
             const a = pos[from], b = pos[to]; const sameX = Math.abs(a.x - b.x) < 1;
@@ -604,14 +632,15 @@ function Sequence({ projects, byId, onOpen }) {
             const d = sameX ? `M ${a.x + NODE_W} ${sy} C ${a.x + NODE_W + 30} ${sy}, ${b.x + NODE_W + 30} ${ey}, ${b.x + NODE_W} ${ey}` : `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
             return <path key={i} d={d} fill="none" stroke="#A33D3D" strokeWidth="1.6" opacity="0.65" markerEnd="url(#seqArrow)" />;
           })}
-          {/* project nodes — HTML so long titles wrap (clamped to 3 lines) instead of truncating */}
+          {/* project nodes — HTML so long titles wrap instead of truncating; effort + impact color-coded like the board */}
           {projects.map((p) => {
             const ws = wsMeta(p.workstream); const pp = pos[p.id]; if (!pp) return null; const { x: nx, y: ny } = pp;
             return (
               <foreignObject key={p.id} x={nx} y={ny} width={NODE_W} height={NODE_H} onClick={() => onOpen(p.id)} style={{ cursor: "pointer", overflow: "visible" }}>
-                <div xmlns="http://www.w3.org/1999/xhtml" style={{ height: "100%", boxSizing: "border-box", background: T.surface, border: `1px solid ${T.hairline}`, borderLeft: `4px solid ${ws.color}`, borderRadius: 10, padding: "7px 10px", overflow: "hidden", fontFamily: T.body }}>
-                  <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 600, color: ws.color, letterSpacing: "0.06em" }}>{p.code} · {p.effort || "M"}</div>
-                  <div title={p.title} style={{ fontSize: 11.5, fontWeight: 600, color: T.ink, lineHeight: 1.22, marginTop: 2, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.title}</div>
+                <div xmlns="http://www.w3.org/1999/xhtml" style={{ height: "100%", boxSizing: "border-box", background: T.surface, border: `1px solid ${T.hairline}`, borderLeft: `4px solid ${ws.color}`, borderRadius: 10, padding: "7px 10px", overflow: "hidden", fontFamily: T.body, display: "flex", flexDirection: "column", gap: 3 }}>
+                  <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 600, color: ws.color, letterSpacing: "0.06em" }}>{p.code}</div>
+                  <div title={p.title} style={{ flex: 1, fontSize: 11.5, fontWeight: 600, color: T.ink, lineHeight: 1.22, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.title}</div>
+                  <div style={{ display: "flex", gap: 5 }}><EffortChip effort={p.effort} /><ImpactChip impact={p.impact} /></div>
                 </div>
               </foreignObject>
             );
