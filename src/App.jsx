@@ -485,7 +485,7 @@ function Matrix({ projects, onOpen }) {
   });
   const pos = Object.fromEntries(pts.map((t) => [t.p.id, t]));
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 260px", gap: 18, alignItems: "start" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 420px", gap: 18, alignItems: "start" }}>
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
           <h2 style={h2Style}>Impact vs. effort</h2>
@@ -528,11 +528,11 @@ function Matrix({ projects, onOpen }) {
       </div>
       <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 14 }}>
         <SectionTitle>Projects</SectionTitle>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 14px", marginTop: 10 }}>
           {projects.map((p) => {
             const ws = wsMeta(p.workstream);
             return (
-              <button key={p.id} onClick={() => onOpen(p.id)} style={{ display: "flex", gap: 9, alignItems: "baseline", textAlign: "left", background: "none", border: "none", padding: "2px 0", fontFamily: T.body }}>
+              <button key={p.id} onClick={() => onOpen(p.id)} style={{ display: "flex", gap: 9, alignItems: "baseline", textAlign: "left", background: "none", border: "none", padding: "2px 0", fontFamily: T.body, minWidth: 0 }}>
                 <span style={{ width: 9, height: 9, borderRadius: 999, background: ws.color, flexShrink: 0, transform: "translateY(1px)" }} />
                 <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, color: ws.color, minWidth: 42 }}>{p.code}</span>
                 <span style={{ fontSize: 12.5, color: T.ink, lineHeight: 1.35 }}>{p.title}</span>
