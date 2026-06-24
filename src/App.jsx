@@ -435,7 +435,7 @@ export default function App() {
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
       `}</style>
 
-      <header style={{ padding: "26px 28px 0", maxWidth: 1180, margin: "0 auto" }}>
+      <header style={{ padding: "26px 14px 0", maxWidth: 1180, margin: "0 auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
           <div>
             <Eyebrow>MOXIE · REVOPS · {projects.length} PROJECTS</Eyebrow>
@@ -467,7 +467,7 @@ export default function App() {
         </div>
       </header>
 
-      <main style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 28px 60px" }}>
+      <main style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 14px 60px" }}>
         {needsRestore && (
           <div style={{ background: "#FFF8EC", border: "1px solid #E9D08A", borderRadius: 12, padding: "14px 18px", marginBottom: 18, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 240 }}>
@@ -627,7 +627,7 @@ function Sequence({ projects, byId, onOpen }) {
   const cell = {}; lanes.forEach((w) => { cell[w] = {}; quarters.forEach((q) => { cell[w][q] = []; }); });
   projects.forEach((p) => cell[g.keyOf(p)][p.targetWindow || "TBD"].push(p));
 
-  const NODE_W = 196, NODE_H = 90, V_GAP = 12, COL_GAP = 104, TOP = 50, GUTTER = 150, PADY = 14;
+  const NODE_W = 170, NODE_H = 90, V_GAP = 12, COL_GAP = 104, TOP = 50, GUTTER = 120, PADY = 14;
   const colX = (i) => GUTTER + i * (NODE_W + COL_GAP);
   const laneRows = {}; lanes.forEach((w) => { laneRows[w] = Math.max(1, ...quarters.map((q) => cell[w][q].length)); });
   const laneY = {}, laneH = {}; let acc = TOP;
