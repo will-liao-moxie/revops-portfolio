@@ -198,12 +198,10 @@ function normDel(s) { return (s || "").toLowerCase().trim().replace(/\s+/g, " ")
 function resourceNames(resource) { return new Set([normName(resource.label), normName(resource.lead)].filter(Boolean)); }
 function matchesResource(resource, who) { return resourceNames(resource).has(normName(who)); }
 function roleEffort(r) { return EFFORT_HOURS[r && r.effort] || EFFORT_HOURS.M; }
-function quarterOf(start) { const idx = parseStart(start); return idx == null ? "TBD" : weekLabel(idx).q; }
-// A project's work assignments drive Resourcing. If it has a scheduled timeline (Gantt), those
-// tasks — owner + effort + the quarter each runs in — are the source of truth; otherwise fall
-// back to the Team & resourcing roles (project's target quarter).
+// Resourcing is driven solely by the Team & resourcing roles — each named team's effort, counted
+// in the project's target quarter. The timeline/schedule is only for visualizing weeks, NOT for
+// resourcing load (a team with several scheduled deliverables shouldn't be multi-counted).
 function projectAssignments(p) {
-  if ((p.schedule || []).length) return p.schedule.map((t) => ({ owner: t.owner || "", pts: EFFORT_HOURS[t.effort] || EFFORT_HOURS.M, quarter: quarterOf(t.start) }));
   return (p.roles || []).map((r) => ({ owner: r.who || "", pts: roleEffort(r), quarter: p.targetWindow || "TBD" }));
 }
 function resourceProjects(resource, projects) { return projects.filter((p) => projectAssignments(p).some((a) => matchesResource(resource, a.owner))); }

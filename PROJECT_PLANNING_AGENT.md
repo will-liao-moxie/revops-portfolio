@@ -185,13 +185,17 @@ their exact column shapes so anything you produce pastes/imports cleanly:
 
 ## Timeline / Gantt payload (per-project)
 
-The Gantt is the **next level of resourcing** — every project **deliverable** placed on a weekly
-timeline with a clear owner and an hours estimate. Each project doc renders its deliverables as a
-weekly Gantt (owner as the subtitle), they feed the Resourcing views (owner + hours + the quarter
-from `start`), and they roll up into the app's **Timeline** view. The Gantt shows no effort/size
-chips — sizing is expressed in **hours** (`hours` per deliverable: XS≈10, S≈20, M≈40, L≈60, XL≈80).
-To populate a project's timeline, generate a CSV and the user imports it from that project's doc
-(**Import timeline CSV**) — columns `deliverable, owner, start, weeks, hours`.
+The Gantt places every project **deliverable** on a weekly timeline with a clear owner and an
+hours estimate. Each project doc renders its deliverables as a weekly Gantt (owner as the subtitle)
+and they roll up into the app's **Timeline** view. The Gantt shows no effort/size chips — sizing is
+expressed in **hours** (`hours` per deliverable: XS≈10, S≈20, M≈40, L≈60, XL≈80). To populate a
+project's timeline, generate a CSV and the user imports it from that project's doc (**Import
+timeline CSV**) — columns `deliverable, owner, start, weeks, hours`.
+
+**Important:** the timeline is for *visualizing weeks only*. **Resourcing load is driven entirely by
+the project's `team` list** (each named team's effort → hours, counted in the project's `target`
+quarter) — NOT by the schedule. So a team that owns several scheduled deliverables is still counted
+once in Resourcing, via its single `team` entry.
 
 **Columns:** `deliverable, owner, start, weeks` (optional `effort` XS–XL)
 - `deliverable` — **must exactly match one of the project's deliverables** (the rows you wrote in
