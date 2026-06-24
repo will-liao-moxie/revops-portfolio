@@ -283,6 +283,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [wsFilter, setWsFilter] = useState("All");
   const [showAdd, setShowAdd] = useState(false);
+  const [needsRestore, setNeedsRestore] = useState(false);
   const [unlocked, setUnlocked] = useState(() => getEditKey() === EDIT_PW);
 
   const applyState = (data) => {
@@ -300,19 +301,47 @@ export default function App() {
   const cacheProjects = (nextProjects) => writeCache({ projects: nextProjects, settings: stateRef.current.settings });
   const cacheSettings = (nextSettings) => writeCache({ projects: stateRef.current.projects, settings: nextSettings });
 
-  // single combined read (1 list op/load instead of 2); falls back to the local cache on any error
+  // single combined read; falls back to the local cache on any error
   const refresh = async () => {
     try {
       setLoadError("");
       const res = await fetch("/api/data", { cache: "no-store" });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Could not load data (${res.status})`); }
       const data = await res.json();
-      applyState(data);
-      writeCache({ projects: data.projects || [], settings: data.settings || {} });
+      const cached = readCache();
+      if (!(data.projects || []).length && (cached?.projects || []).length) {
+        // server is empty but this browser has a saved copy — keep showing it and offer to restore;
+        // crucially do NOT overwrite the local backup with the empty server response
+        applyState(cached);
+        setNeedsRestore(true);
+      } else {
+        applyState(data);
+        writeCache({ projects: data.projects || [], settings: data.settings || {} });
+        setNeedsRestore(false);
+      }
     } catch (e) {
       const cached = readCache();
       if (cached) { applyState(cached); setLoadError(""); } else setLoadError(e.message);
     } finally { setLoaded(true); }
+  };
+  // Restore this browser's cached copy to the (empty) server — recovery path after the Blob outage.
+  const restoreFromCache = async () => {
+    const cached = readCache();
+    if (!cached || !(cached.projects || []).length) return;
+    if (getEditKey() !== EDIT_PW) {
+      const pw = window.prompt("Enter the edit password to restore this browser's data:");
+      if (pw == null) return;
+      if (pw !== EDIT_PW) { window.alert("Incorrect password."); return; }
+      storeEditKey(pw); setUnlocked(true);
+    }
+    if (!window.confirm(`Restore ${(cached.projects || []).length} projects from this browser to the server?`)) return;
+    try {
+      const res = await apiWrite("/api/data", "POST", { projects: cached.projects || [], settings: cached.settings || {} });
+      applyState({ projects: res.projects, settings: res.settings });
+      writeCache({ projects: res.projects, settings: res.settings });
+      setNeedsRestore(false);
+      window.alert(`Restored ${(res.projects || []).length} projects.`);
+    } catch (e) { window.alert(`Restore failed: ${e.message}`); }
   };
   useEffect(() => {
     const cached = readCache();
@@ -427,6 +456,15 @@ export default function App() {
       </header>
 
       <main style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 28px 60px" }}>
+        {needsRestore && (
+          <div style={{ background: "#FFF8EC", border: "1px solid #E9D08A", borderRadius: 12, padding: "14px 18px", marginBottom: 18, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: "#6E5612" }}>The server is empty, but this browser has your saved data.</div>
+              <div style={{ fontSize: 12.5, color: "#6E5612", lineHeight: 1.5, marginTop: 3 }}>Storage was migrated to a new database. Click restore to push this browser's copy ({(readCache()?.projects || []).length} projects) back to the server. You're viewing that local copy now.</div>
+            </div>
+            <button onClick={restoreFromCache} style={{ ...btnSolid, background: "#9A6A12" }}>Restore to server</button>
+          </div>
+        )}
         {!loaded ? <p style={{ color: T.inkSoft, fontSize: 14 }}>Loading…</p>
           : loadError ? (
             <div style={{ background: "#FBEAEA", border: "1px solid #E3B9B9", borderRadius: 12, padding: 20, maxWidth: 560 }}>

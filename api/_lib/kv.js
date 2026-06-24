@@ -1,70 +1,51 @@
-import { put, list } from "@vercel/blob";
+import postgres from "postgres";
 
-/* Combined state lives in ONE append-only versioned store: state-v/<ms>.json holds
-   { projects, settings }. Reads do a single list() (Advanced op) instead of one per
-   collection — halving advanced-operation usage on the hot read path. We APPEND ONLY,
-   never delete, so a stale/empty write can never wipe history.
-   (A fixed filename can't be used: Vercel's CDN serves stale copies of a fixed URL.) */
-const STATE_PREFIX = "state-v/";
-/* legacy split stores — migrated-on-read the first time, then state-v/ is the source of truth */
-const OLD_PROJECTS = "projects-v/";
-const OLD_SETTINGS = "settings-v/";
-const LEGACY = { [OLD_PROJECTS]: "projects.json", [OLD_SETTINGS]: "settings.json" };
-const token = () => process.env.BLOB_READ_WRITE_TOKEN;
-function ver(b) { const m = (b.pathname || "").match(/(\d{10,})/); return m ? Number(m[1]) : new Date(b.uploadedAt).getTime(); }
-
-async function readPrefix(prefix, fallback) {
-  const { blobs } = await list({ prefix, token: token() });
-  if (blobs.length) {
-    blobs.sort((a, b) => ver(b) - ver(a));
-    const res = await fetch(blobs[0].url, { cache: "no-store" });
-    return await res.json();
+/* Storage is Supabase Postgres. The whole app state ({ projects, settings }) lives in ONE row
+   of app_state; every save also appends to app_state_log so we keep point-in-time history for
+   recovery (the Blob store taught us to never have a single overwritable copy).
+   Reads are a single indexed SELECT — no per-read list/op metering, no "store blocked" wall. */
+let sql;
+function db() {
+  if (!sql) {
+    const url = process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL || process.env.POSTGRES_URL_NON_POOLING;
+    // pooled Supabase/Supavisor connection runs in transaction mode → disable prepared statements
+    sql = postgres(url, { prepare: false, idle_timeout: 20, max: 1, ssl: "require" });
   }
-  // migrate-on-read from the legacy single-file path
-  const legacy = LEGACY[prefix];
-  if (legacy) {
-    const { blobs: lb } = await list({ prefix: legacy, token: token() });
-    const m = lb.filter((b) => b.pathname === legacy).sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt))[0];
-    if (m) { const res = await fetch(m.url + "?cb=" + Date.now(), { cache: "no-store" }); return await res.json(); }
-  }
-  return fallback;
+  return sql;
 }
 
-async function writeState(state) {
-  await put(`${STATE_PREFIX}${Date.now()}.json`, JSON.stringify(state), {
-    access: "public", contentType: "application/json", token: token(), addRandomSuffix: true,
-  });
+let ready;
+async function ensure() {
+  if (ready) return;
+  const s = db();
+  await s`create table if not exists app_state (id int primary key, data jsonb not null, updated_at timestamptz default now())`;
+  await s`create table if not exists app_state_log (id bigserial primary key, data jsonb not null, created_at timestamptz default now())`;
+  ready = true;
 }
 
-/* Read the combined {projects, settings}. One list() in the steady state. The first time
-   (no state-v/ yet) it migrates the old split stores and persists them, so later reads are
-   single-list again. */
-// Reads the newest combined state. THROWS on a read error rather than returning empty — a
-// read-modify-write that silently saw "empty" on a transient failure would persist a wipe.
-// Only returns empty when the store genuinely has no versions and no legacy data.
+// Reads the current combined state. THROWS on a DB error (a read-modify-write that silently saw
+// "empty" on a transient failure would persist a wipe). Returns empty only when the row truly
+// doesn't exist yet.
 export async function getState() {
-  const { blobs } = await list({ prefix: STATE_PREFIX, token: token() });
-  if (blobs.length) {
-    blobs.sort((a, b) => ver(b) - ver(a));
-    const res = await fetch(blobs[0].url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`state read failed (${res.status})`);
-    const s = await res.json();
-    return { projects: s.projects || [], settings: s.settings || {} };
-  }
-  const projects = (await readPrefix(OLD_PROJECTS, [])) || [];
-  const settings = (await readPrefix(OLD_SETTINGS, {})) || {};
-  const migrated = { projects, settings };
-  if (projects.length || Object.keys(settings).length) { try { await writeState(migrated); } catch { /* best-effort */ } }
-  return migrated;
+  await ensure();
+  const rows = await db()`select data from app_state where id = 1`;
+  if (rows.length) { const s = rows[0].data || {}; return { projects: s.projects || [], settings: s.settings || {} }; }
+  return { projects: [], settings: {} };
 }
-// Read-only variant for the GET endpoint: tolerate errors with an empty result (never used for writes).
+
+// Read-only variant for GET endpoints: tolerate errors with an empty result (never used for writes).
 export async function getStateSafe() { try { return await getState(); } catch { return { projects: [], settings: {} }; } }
 
 export async function saveState(state) {
-  await writeState({ projects: state.projects || [], settings: state.settings || {} });
+  await ensure();
+  const data = { projects: state.projects || [], settings: state.settings || {} };
+  const s = db();
+  await s`insert into app_state (id, data, updated_at) values (1, ${s.json(data)}, now())
+          on conflict (id) do update set data = excluded.data, updated_at = now()`;
+  await s`insert into app_state_log (data) values (${s.json(data)})`; // append-only history
 }
 
-/* compatibility helpers (each still single-list + single-put) */
+/* compatibility helpers */
 export async function getProjects() { return (await getState()).projects; }
 export async function saveProjects(projects) { const s = await getState(); await saveState({ ...s, projects }); }
 export async function getSettings() { return (await getState()).settings; }
