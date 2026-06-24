@@ -401,6 +401,7 @@ export default function App() {
     try { await apiWrite("/api/settings", "PUT", payload); cacheSettings(payload); } catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
   };
   const setCapacity = (label, value) => { const c = { ...capacities, [label]: value }; setCapacities(c); persistSettings({ capacities: c }); };
+  const saveCapacities = (caps) => { setCapacities(caps); return persistSettings({ capacities: caps }); };
   const setWeekly = (person, value) => { const c = { ...weeklyCap, [person]: value }; setWeeklyCap(c); persistSettings({ weeklyCap: c }); };
   const saveOrg = (nextOrg) => { setOrg(nextOrg); return persistSettings({ org: nextOrg }); };
   const importSchedule = async (text) => {
@@ -490,7 +491,7 @@ export default function App() {
           )
             : view === "matrix" ? <Matrix projects={visible} onOpen={setSelectedId} />
               : view === "sequence" ? <Sequence projects={visible} byId={byId} onOpen={setSelectedId} />
-                : view === "resourcing" ? <Resourcing projects={projects} org={org} capacities={capacities} unlocked={unlocked} onSetCapacity={setCapacity} onSaveOrg={saveOrg} onOpen={setSelectedId} />
+                : view === "resourcing" ? <Resourcing projects={projects} org={org} capacities={capacities} unlocked={unlocked} onSaveCapacities={saveCapacities} onSaveOrg={saveOrg} onOpen={setSelectedId} />
                   : <Schedule projects={projects} org={org} unlocked={unlocked} onImport={importSchedule} onOpen={setSelectedId} />}
       </main>
 
@@ -706,11 +707,24 @@ function CapInput({ value, onCommit }) {
   return <input type="number" min="1" value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} style={{ width: 60, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "3px 6px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} />;
 }
 const FROZEN = { team: { position: "sticky", left: 0, zIndex: 2 }, cap: { position: "sticky", left: TEAM_W, zIndex: 2, borderRight: `1px solid ${T.hairline}` } };
-function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSaveOrg, onOpen }) {
+function Resourcing({ projects, org, capacities, unlocked, onSaveCapacities, onSaveOrg, onOpen }) {
   const [managing, setManaging] = useState(false);
   const [rosterDirty, setRosterDirty] = useState(false);
   const [showRosterImport, setShowRosterImport] = useState(false);
   const [mode, setMode] = useState("quarter"); // "quarter" | "project"
+  // capacity edits are buffered locally and only persisted on "Save capacities" (explicit save)
+  const [capDraft, setCapDraft] = useState(capacities);
+  const [capSaving, setCapSaving] = useState(false);
+  useEffect(() => { setCapDraft(capacities); }, [capacities]);
+  const capDraftRef = useRef(capDraft); capDraftRef.current = capDraft;
+  const capDirty = useMemo(() => JSON.stringify(capDraft) !== JSON.stringify(capacities), [capDraft, capacities]);
+  const editCap = (label, n) => setCapDraft((c) => ({ ...c, [label]: n }));
+  const saveCaps = async () => {
+    if (typeof document !== "undefined" && document.activeElement && document.activeElement.blur) document.activeElement.blur(); // flush a focused cap field
+    await new Promise((r) => setTimeout(r, 0));
+    setCapSaving(true);
+    try { await onSaveCapacities(capDraftRef.current); } finally { setCapSaving(false); }
+  };
   const [colorMode, setColorMode] = useState("comparison"); // "comparison" (heatmap by load, default) | "cap" (vs capacity)
   const toggleManage = () => {
     if (managing && rosterDirty && !window.confirm("You have unsaved roster changes. Discard them?")) return;
@@ -775,6 +789,15 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
       {showRosterImport && <RosterImportModal onClose={() => setShowRosterImport(false)} onApply={onSaveOrg} />}
       {managing && unlocked && <OrgEditor org={org} onSave={onSaveOrg} onDirty={setRosterDirty} />}
 
+      {unlocked && capDirty && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#FFF8EC", border: "1px solid #E9D08A", borderRadius: 10, padding: "8px 14px" }}>
+          <span style={{ fontSize: 12.5, color: "#9A6A12", fontWeight: 600 }}>Unsaved capacity changes</span>
+          <div style={{ flex: 1 }} />
+          <button onClick={() => setCapDraft(capacities)} disabled={capSaving} style={btnGhost}>Discard</button>
+          <button onClick={saveCaps} disabled={capSaving} style={{ ...btnSolid, opacity: capSaving ? 0.5 : 1 }}>{capSaving ? "Saving…" : "Save capacities"}</button>
+        </div>
+      )}
+
       <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760, fontFamily: T.body }}>
           <thead>
@@ -796,7 +819,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
             </tr>
           </thead>
           <tbody>
-            {(org || []).map((g) => <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name] || []} mode={mode} colorMode={colorMode} cellMax={cellMax} projects={projCols} qStartIds={qStartIds} quarters={quarters} categories={categories} capacities={capacities} unlocked={unlocked} onSetCapacity={onSetCapacity} />)}
+            {(org || []).map((g) => <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name] || []} mode={mode} colorMode={colorMode} cellMax={cellMax} projects={projCols} qStartIds={qStartIds} quarters={quarters} categories={categories} capacities={capDraft} unlocked={unlocked} onSetCapacity={editCap} />)}
           </tbody>
         </table>
       </div>
