@@ -39,22 +39,26 @@ async function writeState(state) {
 /* Read the combined {projects, settings}. One list() in the steady state. The first time
    (no state-v/ yet) it migrates the old split stores and persists them, so later reads are
    single-list again. */
+// Reads the newest combined state. THROWS on a read error rather than returning empty — a
+// read-modify-write that silently saw "empty" on a transient failure would persist a wipe.
+// Only returns empty when the store genuinely has no versions and no legacy data.
 export async function getState() {
-  try {
-    const { blobs } = await list({ prefix: STATE_PREFIX, token: token() });
-    if (blobs.length) {
-      blobs.sort((a, b) => ver(b) - ver(a));
-      const res = await fetch(blobs[0].url, { cache: "no-store" });
-      const s = await res.json();
-      return { projects: s.projects || [], settings: s.settings || {} };
-    }
-    const projects = (await readPrefix(OLD_PROJECTS, [])) || [];
-    const settings = (await readPrefix(OLD_SETTINGS, {})) || {};
-    const migrated = { projects, settings };
-    if (projects.length || Object.keys(settings).length) { try { await writeState(migrated); } catch { /* best-effort */ } }
-    return migrated;
-  } catch { return { projects: [], settings: {} }; }
+  const { blobs } = await list({ prefix: STATE_PREFIX, token: token() });
+  if (blobs.length) {
+    blobs.sort((a, b) => ver(b) - ver(a));
+    const res = await fetch(blobs[0].url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`state read failed (${res.status})`);
+    const s = await res.json();
+    return { projects: s.projects || [], settings: s.settings || {} };
+  }
+  const projects = (await readPrefix(OLD_PROJECTS, [])) || [];
+  const settings = (await readPrefix(OLD_SETTINGS, {})) || {};
+  const migrated = { projects, settings };
+  if (projects.length || Object.keys(settings).length) { try { await writeState(migrated); } catch { /* best-effort */ } }
+  return migrated;
 }
+// Read-only variant for the GET endpoint: tolerate errors with an empty result (never used for writes).
+export async function getStateSafe() { try { return await getState(); } catch { return { projects: [], settings: {} }; } }
 
 export async function saveState(state) {
   await writeState({ projects: state.projects || [], settings: state.settings || {} });
