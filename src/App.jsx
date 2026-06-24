@@ -740,7 +740,7 @@ function Sequence({ projects, byId, onOpen }) {
 }
 
 /* ---------- RESOURCING ---------- */
-const TEAM_W = 300, CAP_W = 96;
+const TEAM_W = 230, CAP_W = 96;
 // commit-on-blur capacity input: free typing (incl. 3 digits) without per-keystroke clamping/saving
 function CapInput({ value, onCommit }) {
   const [v, setV] = useState(String(value));
@@ -748,7 +748,7 @@ function CapInput({ value, onCommit }) {
   const commit = () => { const n = Math.max(1, Math.round(Number(v) || 0) || 1); onCommit(n); setV(String(n)); };
   return <input type="number" min="1" value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} style={{ width: 60, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "3px 6px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} />;
 }
-const FROZEN = { team: { position: "sticky", left: 0, zIndex: 2 }, cap: { position: "sticky", left: TEAM_W, zIndex: 2, borderRight: `1px solid ${T.hairline}` } };
+const FROZEN = { team: { position: "sticky", left: 0, zIndex: 2, borderRight: `1px solid ${T.hairline}` }, cap: { position: "sticky", left: TEAM_W, zIndex: 2, borderRight: `1px solid ${T.hairline}` } };
 function Resourcing({ projects, org, capacities, unlocked, onSaveOrg, onOpen }) {
   const [managing, setManaging] = useState(false);
   const [rosterDirty, setRosterDirty] = useState(false);
@@ -876,20 +876,26 @@ function ResourceGroup({ group, rows, mode, colorMode, cellMax, projects, qStart
   const chip = { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 };
   return (
     <>
-      <tr><td colSpan={ncols} style={{ ...FROZEN.team, padding: "10px 14px 4px", background: T.paper, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{group}</td></tr>
+      <tr><td colSpan={ncols} style={{ ...FROZEN.team, borderRight: "none", padding: "10px 14px 4px", background: T.paper, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{group}</td></tr>
       {rows.map((r) => {
         const cap = capacities[r.label] ?? DEFAULT_CAP;
-        // comparative → heat by relative load; vs-capacity → traffic light by load vs this team's cap
-        const cellStyle = (v) => (compare ? heatStyle(v, cellMax) : capHeatStyle(v, cap)) || {};
+        // comparative → heat by relative load (all views); vs-capacity → traffic light only for the
+        // by-quarter view (a single project's / category's hours vs the quarterly cap isn't meaningful)
+        const capColored = !compare && mode === "quarter";
+        const cellStyle = (v) => {
+          if (compare) return heatStyle(v, cellMax) || {};
+          if (capColored) return capHeatStyle(v, cap) || {};
+          return { background: T.hairlineSoft, color: T.ink };
+        };
         return (
           <tr key={r.label} style={{ borderTop: `1px solid ${T.hairlineSoft}` }}>
             <td style={{ ...FROZEN.team, background: T.surface, padding: "9px 14px", fontSize: 13, width: TEAM_W }}><div style={{ fontWeight: 600, lineHeight: 1.25 }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</div>{(r.lead || r.pm) && <div style={{ fontSize: 11, color: T.inkSoft, lineHeight: 1.25, marginTop: 1 }}>{[r.lead, r.pm ? `PM ${r.pm}` : ""].filter(Boolean).join(" · ")}</div>}</td>
             {!compare && <td style={{ ...FROZEN.cap, background: T.surface, textAlign: "center", padding: "0 8px" }}>{unlocked ? <CapInput value={cap} onCommit={(n) => onSetCapacity(r.label, n)} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}</td>}
             {mode === "project"
-              ? projects.map((p) => { const v = r.unitsBy[p.id]; const oc = !compare && v > cap; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px", borderLeft: qStartIds && qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}>{v != null ? <span title={`${p.code} · ${p.targetWindow || "TBD"} · ${v}h${!compare ? ` / ${cap} cap` : ""}`} style={{ ...chip, ...cellStyle(v) }}>{v}{oc ? " ⚠" : ""}</span> : null}</td>; })
+              ? projects.map((p) => { const v = r.unitsBy[p.id]; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px", borderLeft: qStartIds && qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}>{v != null ? <span title={`${p.code} · ${p.targetWindow || "TBD"} · ${v}h`} style={{ ...chip, ...cellStyle(v) }}>{v}</span> : null}</td>; })
               : mode === "category"
-                ? categories.map((c) => { const v = r.unitsByCat[c] || 0; const oc = !compare && v > cap; return <td key={c} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={`${c} · ${v}h${!compare ? ` / ${cap} cap` : ""}`} style={{ ...chip, ...cellStyle(v) }}>{v}{oc ? " ⚠" : ""}</span> : null}</td>; })
-                : quarters.map((q) => { const v = r.unitsByQ[q] || 0; const oc = !compare && v > cap; return <td key={q} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={compare ? `${q} · ${v}h` : `${q} · ${v}/${cap}h`} style={{ ...chip, ...cellStyle(v) }}>{v}{oc ? " ⚠" : ""}</span> : null}</td>; })}
+                ? categories.map((c) => { const v = r.unitsByCat[c] || 0; return <td key={c} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={`${c} · ${v}h`} style={{ ...chip, ...cellStyle(v) }}>{v}</span> : null}</td>; })
+                : quarters.map((q) => { const v = r.unitsByQ[q] || 0; const oc = capColored && v > cap; return <td key={q} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={compare ? `${q} · ${v}h` : `${q} · ${v}/${cap}h`} style={{ ...chip, ...cellStyle(v) }}>{v}{oc ? " ⚠" : ""}</span> : null}</td>; })}
           </tr>
         );
       })}
