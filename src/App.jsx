@@ -626,14 +626,35 @@ function Sequence({ projects, byId, onOpen }) {
   const lanes = g.order(laneKeys);
   const cell = {}; lanes.forEach((w) => { cell[w] = {}; quarters.forEach((q) => { cell[w][q] = []; }); });
   projects.forEach((p) => cell[g.keyOf(p)][p.targetWindow || "TBD"].push(p));
+  const laneOfProj = {}; projects.forEach((p) => { laneOfProj[p.id] = g.keyOf(p); });
 
   const NODE_W = 170, NODE_H = 90, V_GAP = 12, COL_GAP = 104, TOP = 50, GUTTER = 120, PADY = 14;
   const colX = (i) => GUTTER + i * (NODE_W + COL_GAP);
-  const laneRows = {}; lanes.forEach((w) => { laneRows[w] = Math.max(1, ...quarters.map((q) => cell[w][q].length)); });
+  // Assign each project a vertical "track" within its lane. A project inherits the track of its
+  // same-lane prerequisite (processed left-to-right by quarter) when that track is free, so chained
+  // dependencies line up on one row and their arrows run straight instead of crossing.
+  const trackOf = {}; const laneTracks = {};
+  lanes.forEach((w) => {
+    const usedByCol = {}; let maxTrack = 0;
+    quarters.forEach((q, ci) => {
+      const used = (usedByCol[ci] = usedByCol[ci] || new Set());
+      const cps = cell[w][q].map((p) => {
+        const pre = (p.dependsOn || []).map((d) => (laneOfProj[d.id] === w ? trackOf[d.id] : null)).filter((t) => t != null);
+        return { p, pref: pre.length ? Math.min(...pre) : null };
+      });
+      cps.sort((a, b) => (a.pref == null ? 1 : b.pref == null ? -1 : a.pref - b.pref));
+      cps.forEach(({ p, pref }) => {
+        let track = pref != null ? pref : 0;
+        while (used.has(track)) track++;
+        used.add(track); trackOf[p.id] = track; if (track > maxTrack) maxTrack = track;
+      });
+    });
+    laneTracks[w] = maxTrack + 1;
+  });
   const laneY = {}, laneH = {}; let acc = TOP;
-  lanes.forEach((w) => { laneY[w] = acc; laneH[w] = PADY + laneRows[w] * (NODE_H + V_GAP); acc += laneH[w]; });
+  lanes.forEach((w) => { laneY[w] = acc; laneH[w] = PADY + laneTracks[w] * (NODE_H + V_GAP); acc += laneH[w]; });
   const pos = {};
-  lanes.forEach((w) => quarters.forEach((q) => cell[w][q].forEach((p, r) => { pos[p.id] = { x: colX(qIndex[q]), y: laneY[w] + PADY / 2 + r * (NODE_H + V_GAP) }; })));
+  lanes.forEach((w) => quarters.forEach((q) => cell[w][q].forEach((p) => { pos[p.id] = { x: colX(qIndex[q]), y: laneY[w] + PADY / 2 + trackOf[p.id] * (NODE_H + V_GAP) }; })));
   const width = colX(quarters.length - 1) + NODE_W + 16;
   const height = acc + 6;
   const edges = [];
