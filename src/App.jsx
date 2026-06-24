@@ -717,6 +717,10 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
   };
   const quarters = useMemo(() => Array.from(new Set(projects.flatMap((p) => projectAssignments(p).map((a) => a.quarter)))).sort((a, b) => targetRank(a) - targetRank(b)), [projects]);
   const categories = useMemo(() => Array.from(new Set(projects.map((p) => p.workstream || "Other"))), [projects]);
+  // by-project view: order columns by quarter (then category/number) so projects group under their quarter
+  const projCols = useMemo(() => (mode === "project" ? [...projects].sort((a, b) => targetRank(a.targetWindow || "TBD") - targetRank(b.targetWindow || "TBD") || byCategoryThenNumber(a, b)) : projects), [projects, mode]);
+  const projQSpans = useMemo(() => { const s = []; projCols.forEach((p) => { const q = p.targetWindow || "TBD"; const last = s[s.length - 1]; if (last && last.q === q) last.len++; else s.push({ q, len: 1 }); }); return s; }, [projCols]);
+  const qStartIds = useMemo(() => { const set = new Set(); let prev = null; projCols.forEach((p, i) => { const q = p.targetWindow || "TBD"; if (i > 0 && q !== prev) set.add(p.id); prev = q; }); return set; }, [projCols]);
   const resources = useMemo(() => allResources(org), [org]);
   const byGroup = {};
   (org || []).forEach((g) => { byGroup[g.name] = []; });
@@ -767,18 +771,25 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
       <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760, fontFamily: T.body }}>
           <thead>
+            {mode === "project" && (
+              <tr>
+                <th style={{ ...thStyle, ...FROZEN.team, zIndex: 3, background: T.paper, minWidth: TEAM_W, width: TEAM_W }} />
+                {colorMode === "cap" && <th style={{ ...thStyle, ...FROZEN.cap, zIndex: 3, background: T.paper, width: CAP_W }} />}
+                {projQSpans.map((s, i) => <th key={s.q + i} colSpan={s.len} style={{ ...thStyle, textAlign: "center", color: T.ink, background: T.paper, borderLeft: `2px solid ${T.hairline}` }}>{s.q.toUpperCase()}</th>)}
+              </tr>
+            )}
             <tr>
               <th style={{ ...thStyle, ...FROZEN.team, zIndex: 3, textAlign: "left", minWidth: TEAM_W, width: TEAM_W }}>Team / resource</th>
               {colorMode === "cap" && <th style={{ ...thStyle, ...FROZEN.cap, zIndex: 3, width: CAP_W }}>Cap</th>}
               {mode === "project"
-                ? projects.map((p) => { const ws = wsMeta(p.workstream); return <th key={p.id} style={thStyle}><button onClick={() => onOpen(p.id)} title={p.title} style={{ background: "none", border: "none", color: ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em" }}>{p.code}</button></th>; })
+                ? projCols.map((p) => { const ws = wsMeta(p.workstream); return <th key={p.id} style={{ ...thStyle, borderLeft: qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}><button onClick={() => onOpen(p.id)} title={`${p.title} · ${p.targetWindow || "TBD"}`} style={{ background: "none", border: "none", color: ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em" }}>{p.code}</button></th>; })
                 : mode === "category"
                   ? categories.map((c) => { const ws = wsMeta(c); return <th key={c} title={c} style={{ ...thStyle, color: ws.color, minWidth: 96, whiteSpace: "normal", lineHeight: 1.2 }}>{c}</th>; })
                   : quarters.map((q) => <th key={q} style={thStyle}>{q}</th>)}
             </tr>
           </thead>
           <tbody>
-            {(org || []).map((g) => <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name] || []} mode={mode} colorMode={colorMode} cellMax={cellMax} projects={projects} quarters={quarters} categories={categories} capacities={capacities} unlocked={unlocked} onSetCapacity={onSetCapacity} />)}
+            {(org || []).map((g) => <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name] || []} mode={mode} colorMode={colorMode} cellMax={cellMax} projects={projCols} qStartIds={qStartIds} quarters={quarters} categories={categories} capacities={capacities} unlocked={unlocked} onSetCapacity={onSetCapacity} />)}
           </tbody>
         </table>
       </div>
@@ -786,7 +797,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
   );
 }
 
-function ResourceGroup({ group, rows, mode, colorMode, cellMax, projects, quarters, categories, capacities, unlocked, onSetCapacity }) {
+function ResourceGroup({ group, rows, mode, colorMode, cellMax, projects, qStartIds, quarters, categories, capacities, unlocked, onSetCapacity }) {
   const compare = colorMode === "comparison";
   const ncols = (mode === "project" ? projects.length : mode === "category" ? categories.length : quarters.length) + (compare ? 1 : 2);
   const chip = { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 };
@@ -801,7 +812,7 @@ function ResourceGroup({ group, rows, mode, colorMode, cellMax, projects, quarte
             <td style={{ ...FROZEN.team, background: T.surface, padding: "9px 14px", fontSize: 13, width: TEAM_W }}><span style={{ fontWeight: 600 }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</span>{r.lead && <span style={{ marginLeft: 8, fontSize: 11, color: T.inkSoft }}>{r.lead}{r.pm ? ` · PM ${r.pm}` : ""}</span>}</td>
             {!compare && <td style={{ ...FROZEN.cap, background: T.surface, textAlign: "center" }}>{unlocked ? <input type="number" min="1" value={cap} onChange={(e) => onSetCapacity(r.label, Math.max(1, Number(e.target.value) || 1))} style={{ width: 44, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "2px 4px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}</td>}
             {mode === "project"
-              ? projects.map((p) => { const ws = wsMeta(p.workstream); const v = r.unitsBy[p.id]; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px" }}>{v != null ? <span title={`${p.code} · ${v} units`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: ws.soft, color: ws.color }) }}>{v}</span> : null}</td>; })
+              ? projects.map((p) => { const ws = wsMeta(p.workstream); const v = r.unitsBy[p.id]; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px", borderLeft: qStartIds && qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}>{v != null ? <span title={`${p.code} · ${p.targetWindow || "TBD"} · ${v} units`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: ws.soft, color: ws.color }) }}>{v}</span> : null}</td>; })
               : mode === "category"
                 ? categories.map((c) => { const ws = wsMeta(c); const v = r.unitsByCat[c] || 0; return <td key={c} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={`${c} · ${v} units`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: ws.soft, color: ws.color }) }}>{v}</span> : null}</td>; })
                 : quarters.map((q) => { const v = r.unitsByQ[q] || 0; const oc = v > cap; return <td key={q} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={compare ? `${q} · ${v} units` : `${q} · ${v}/${cap}`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: oc ? "#FBEAEA" : T.hairlineSoft, color: oc ? "#C0463E" : T.ink }) }}>{v}{!compare && oc ? " ⚠" : ""}</span> : null}</td>; })}
