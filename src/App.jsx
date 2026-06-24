@@ -551,6 +551,7 @@ function Sequence({ projects, byId, onOpen }) {
   if (!projects.length) return <Empty />;
   const quarters = Array.from(new Set(projects.map((p) => p.targetWindow || "TBD"))).sort((a, b) => targetRank(a) - targetRank(b));
   const qIndex = Object.fromEntries(quarters.map((q, i) => [q, i]));
+  const qCount = {}; projects.forEach((p) => { const q = p.targetWindow || "TBD"; qCount[q] = (qCount[q] || 0) + 1; });
   const lanes = []; projects.forEach((p) => { const w = p.workstream || "Other"; if (!lanes.includes(w)) lanes.push(w); });
   const cell = {}; lanes.forEach((w) => { cell[w] = {}; quarters.forEach((q) => { cell[w][q] = []; }); });
   projects.forEach((p) => cell[p.workstream || "Other"][p.targetWindow || "TBD"].push(p));
@@ -594,7 +595,7 @@ function Sequence({ projects, byId, onOpen }) {
           })}
           {/* quarter column guides + headers */}
           {quarters.map((q, i) => <line key={"g" + q} x1={colX(i) - COL_GAP / 2} y1={TOP} x2={colX(i) - COL_GAP / 2} y2={height} stroke={T.hairlineSoft} />)}
-          {quarters.map((q, i) => <text key={q} x={colX(i)} y={20} fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.inkSoft} letterSpacing="0.06em">{q.toUpperCase()}</text>)}
+          {quarters.map((q, i) => <text key={q} x={colX(i)} y={20} fontSize="11" fontFamily={T.mono} fontWeight="600" fill={T.inkSoft} letterSpacing="0.06em">{q.toUpperCase()} <tspan fontWeight="700" fill={T.ink}>· {qCount[q]}</tspan></text>)}
           {/* dependency arrows */}
           {showDeps && edges.map(([from, to], i) => {
             const a = pos[from], b = pos[to]; const sameX = Math.abs(a.x - b.x) < 1;
