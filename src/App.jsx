@@ -627,7 +627,7 @@ function Sequence({ projects, byId, onOpen }) {
   const cell = {}; lanes.forEach((w) => { cell[w] = {}; quarters.forEach((q) => { cell[w][q] = []; }); });
   projects.forEach((p) => cell[g.keyOf(p)][p.targetWindow || "TBD"].push(p));
 
-  const NODE_W = 196, NODE_H = 90, V_GAP = 12, COL_GAP = 54, TOP = 50, GUTTER = 150, PADY = 14;
+  const NODE_W = 196, NODE_H = 90, V_GAP = 12, COL_GAP = 104, TOP = 50, GUTTER = 150, PADY = 14;
   const colX = (i) => GUTTER + i * (NODE_W + COL_GAP);
   const laneRows = {}; lanes.forEach((w) => { laneRows[w] = Math.max(1, ...quarters.map((q) => cell[w][q].length)); });
   const laneY = {}, laneH = {}; let acc = TOP;
