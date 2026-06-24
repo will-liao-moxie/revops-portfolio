@@ -679,8 +679,8 @@ function Sequence({ projects, byId, onOpen }) {
             const a = pos[from], b = pos[to]; const sameX = Math.abs(a.x - b.x) < 1;
             const sx = a.x + (b.x >= a.x ? NODE_W : 0), sy = a.y + NODE_H / 2;
             const ex = b.x + (b.x >= a.x ? 0 : NODE_W), ey = b.y + NODE_H / 2; const mx = (sx + ex) / 2;
-            // same quarter (same column): bow out to the left so the arrow still enters the target box from its left edge
-            const d = sameX ? `M ${a.x} ${sy} C ${a.x - 42} ${sy}, ${b.x - 42} ${ey}, ${b.x} ${ey}` : `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
+            // same quarter (same column): exit the prerequisite's RIGHT edge and curve back into the dependent's LEFT edge
+            const d = sameX ? `M ${a.x + NODE_W} ${sy} C ${a.x + NODE_W + 44} ${sy}, ${b.x - 44} ${ey}, ${b.x} ${ey}` : `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
             return <path key={i} d={d} fill="none" stroke="#A33D3D" strokeWidth="1.6" opacity="0.65" markerEnd="url(#seqArrow)" />;
           })}
           {/* project nodes — HTML so long titles wrap instead of truncating; effort + impact color-coded like the board */}
