@@ -219,8 +219,8 @@ function allResources(org) {
   const out = [];
   (org || []).forEach((g) => {
     (g.members || []).forEach((m) => {
-      if (m.sub) { out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm }); (m.sub || []).forEach((s) => out.push({ group: g.name, label: s.name, parent: m.name, lead: s.lead })); }
-      else out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm });
+      if (m.sub) { out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm, cap: m.cap }); (m.sub || []).forEach((s) => out.push({ group: g.name, label: s.name, parent: m.name, lead: s.lead, pm: s.pm, cap: s.cap })); }
+      else out.push({ group: g.name, label: m.name, lead: m.lead, pm: m.pm, cap: m.cap });
     });
   });
   return out;
@@ -406,10 +406,6 @@ export default function App() {
     const payload = { capacities: next.capacities ?? capacities, weeklyCap: next.weeklyCap ?? weeklyCap, org: next.org ?? org };
     try { await apiWrite("/api/settings", "PUT", payload); cacheSettings(payload); } catch (e) { window.alert(`Couldn't save: ${e.message}`); refresh(); }
   };
-  const setCapacity = (label, value) => { const c = { ...capacities, [label]: value }; setCapacities(c); persistSettings({ capacities: c }); };
-  const saveCapacities = (caps) => { setCapacities(caps); return persistSettings({ capacities: caps }); };
-  // roster import: save org (and capacities, when the CSV carried a cap column) in one write
-  const saveRoster = (nextOrg, nextCaps) => { setOrg(nextOrg); const caps = nextCaps && typeof nextCaps === "object" ? nextCaps : capacities; if (nextCaps && typeof nextCaps === "object") setCapacities(caps); return persistSettings({ org: nextOrg, capacities: caps }); };
   const setWeekly = (person, value) => { const c = { ...weeklyCap, [person]: value }; setWeeklyCap(c); persistSettings({ weeklyCap: c }); };
   const saveOrg = (nextOrg) => { setOrg(nextOrg); return persistSettings({ org: nextOrg }); };
   const importSchedule = async (text) => {
@@ -499,7 +495,7 @@ export default function App() {
           )
             : view === "matrix" ? <Matrix projects={visible} onOpen={setSelectedId} />
               : view === "sequence" ? <Sequence projects={visible} byId={byId} onOpen={setSelectedId} />
-                : view === "resourcing" ? <Resourcing projects={projects} org={org} capacities={capacities} unlocked={unlocked} onSaveCapacities={saveCapacities} onSaveOrg={saveOrg} onSaveRoster={saveRoster} onOpen={setSelectedId} />
+                : view === "resourcing" ? <Resourcing projects={projects} org={org} capacities={capacities} unlocked={unlocked} onSaveOrg={saveOrg} onOpen={setSelectedId} />
                   : <Schedule projects={projects} org={org} unlocked={unlocked} onImport={importSchedule} onOpen={setSelectedId} />}
       </main>
 
@@ -683,7 +679,8 @@ function Sequence({ projects, byId, onOpen }) {
             const a = pos[from], b = pos[to]; const sameX = Math.abs(a.x - b.x) < 1;
             const sx = a.x + (b.x >= a.x ? NODE_W : 0), sy = a.y + NODE_H / 2;
             const ex = b.x + (b.x >= a.x ? 0 : NODE_W), ey = b.y + NODE_H / 2; const mx = (sx + ex) / 2;
-            const d = sameX ? `M ${a.x + NODE_W} ${sy} C ${a.x + NODE_W + 30} ${sy}, ${b.x + NODE_W + 30} ${ey}, ${b.x + NODE_W} ${ey}` : `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
+            // same quarter (same column): bow out to the left so the arrow still enters the target box from its left edge
+            const d = sameX ? `M ${a.x} ${sy} C ${a.x - 42} ${sy}, ${b.x - 42} ${ey}, ${b.x} ${ey}` : `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
             return <path key={i} d={d} fill="none" stroke="#A33D3D" strokeWidth="1.6" opacity="0.65" markerEnd="url(#seqArrow)" />;
           })}
           {/* project nodes — HTML so long titles wrap instead of truncating; effort + impact color-coded like the board */}
@@ -715,23 +712,22 @@ function CapInput({ value, onCommit }) {
   return <input type="number" min="1" value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} style={{ width: 60, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "3px 6px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} />;
 }
 const FROZEN = { team: { position: "sticky", left: 0, zIndex: 2 }, cap: { position: "sticky", left: TEAM_W, zIndex: 2, borderRight: `1px solid ${T.hairline}` } };
-function Resourcing({ projects, org, capacities, unlocked, onSaveCapacities, onSaveOrg, onSaveRoster, onOpen }) {
+function Resourcing({ projects, org, capacities, unlocked, onSaveOrg, onOpen }) {
   const [managing, setManaging] = useState(false);
   const [rosterDirty, setRosterDirty] = useState(false);
   const [showRosterImport, setShowRosterImport] = useState(false);
   const [mode, setMode] = useState("quarter"); // "quarter" | "project"
-  // capacity edits are buffered locally and only persisted on "Save capacities" (explicit save)
-  const [capDraft, setCapDraft] = useState(capacities);
+  // cap edits are buffered as a label→hours OVERLAY and only persisted (onto the org) on Save
+  const [capDraft, setCapDraft] = useState({});
   const [capSaving, setCapSaving] = useState(false);
-  useEffect(() => { setCapDraft(capacities); }, [capacities]);
   const capDraftRef = useRef(capDraft); capDraftRef.current = capDraft;
-  const capDirty = useMemo(() => JSON.stringify(capDraft) !== JSON.stringify(capacities), [capDraft, capacities]);
+  const capDirty = Object.keys(capDraft).length > 0;
   const editCap = (label, n) => setCapDraft((c) => ({ ...c, [label]: n }));
   const saveCaps = async () => {
     if (typeof document !== "undefined" && document.activeElement && document.activeElement.blur) document.activeElement.blur(); // flush a focused cap field
     await new Promise((r) => setTimeout(r, 0));
     setCapSaving(true);
-    try { await onSaveCapacities(capDraftRef.current); } finally { setCapSaving(false); }
+    try { await onSaveOrg(applyCapsToOrg(org, capDraftRef.current, capacities)); setCapDraft({}); } finally { setCapSaving(false); }
   };
   const [colorMode, setColorMode] = useState("comparison"); // "comparison" (heatmap by load, default) | "cap" (vs capacity)
   const toggleManage = () => {
@@ -768,6 +764,8 @@ function Resourcing({ projects, org, capacities, unlocked, onSaveCapacities, onS
   });
   const allRows = Object.values(byGroup).flat();
   const cellMax = Math.max(1, ...allRows.flatMap((r) => Object.values(mode === "project" ? r.unitsBy : mode === "category" ? r.unitsByCat : r.unitsByQ)));
+  // effective cap per team = unsaved overlay → team's stored cap → legacy capacities map → default
+  const effCaps = {}; allRows.forEach((r) => { effCaps[r.label] = capDraft[r.label] != null ? capDraft[r.label] : teamCap(r, capacities); });
   const tab = (k, label) => <button onClick={() => setMode(k)} style={{ fontFamily: T.body, fontSize: 12, fontWeight: mode === k ? 600 : 500, padding: "5px 11px", borderRadius: 999, border: `1px solid ${mode === k ? T.ink : T.hairline}`, background: mode === k ? T.ink : T.surface, color: mode === k ? "#fff" : T.inkSoft }}>{label}</button>;
 
   return (
@@ -794,14 +792,14 @@ function Resourcing({ projects, org, capacities, unlocked, onSaveCapacities, onS
         <button onClick={() => setColorMode("comparison")} style={{ fontFamily: T.body, fontSize: 12, fontWeight: colorMode === "comparison" ? 600 : 500, padding: "5px 11px", borderRadius: 999, border: `1px solid ${colorMode === "comparison" ? T.ink : T.hairline}`, background: colorMode === "comparison" ? T.ink : T.surface, color: colorMode === "comparison" ? "#fff" : T.inkSoft }}>comparative</button>
       </div>
 
-      {showRosterImport && <RosterImportModal onClose={() => setShowRosterImport(false)} onApply={onSaveRoster} />}
+      {showRosterImport && <RosterImportModal onClose={() => setShowRosterImport(false)} onApply={onSaveOrg} />}
       {managing && unlocked && <OrgEditor org={org} onSave={onSaveOrg} onDirty={setRosterDirty} />}
 
       {unlocked && capDirty && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#FFF8EC", border: "1px solid #E9D08A", borderRadius: 10, padding: "8px 14px" }}>
           <span style={{ fontSize: 12.5, color: "#9A6A12", fontWeight: 600 }}>Unsaved capacity changes</span>
           <div style={{ flex: 1 }} />
-          <button onClick={() => setCapDraft(capacities)} disabled={capSaving} style={btnGhost}>Discard</button>
+          <button onClick={() => setCapDraft({})} disabled={capSaving} style={btnGhost}>Discard</button>
           <button onClick={saveCaps} disabled={capSaving} style={{ ...btnSolid, opacity: capSaving ? 0.5 : 1 }}>{capSaving ? "Saving…" : "Save capacities"}</button>
         </div>
       )}
@@ -827,7 +825,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSaveCapacities, onS
             </tr>
           </thead>
           <tbody>
-            {(org || []).map((g) => <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name] || []} mode={mode} colorMode={colorMode} cellMax={cellMax} projects={projCols} qStartIds={qStartIds} quarters={quarters} categories={categories} capacities={capDraft} unlocked={unlocked} onSetCapacity={editCap} />)}
+            {(org || []).map((g) => <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name] || []} mode={mode} colorMode={colorMode} cellMax={cellMax} projects={projCols} qStartIds={qStartIds} quarters={quarters} categories={categories} capacities={effCaps} unlocked={unlocked} onSetCapacity={editCap} />)}
           </tbody>
         </table>
       </div>
@@ -1355,10 +1353,21 @@ function projectsToCsv(projects) {
   });
   return lines.join("\n");
 }
+// a team's capacity: prefer the cap stored on the team, fall back to the legacy capacities map
+function teamCap(r, legacy = {}) { return r && r.cap != null ? r.cap : (legacy[r.label] ?? DEFAULT_CAP); }
+// write a label→cap overlay onto the org tree (cap lives on each team, not a side map)
+function applyCapsToOrg(org, capByLabel, legacy = {}) {
+  const pick = (name, cur) => (capByLabel[name] != null ? capByLabel[name] : (cur != null ? cur : legacy[name]));
+  return (org || []).map((g) => ({ ...g, members: (g.members || []).map((m) => {
+    const out = { ...m }; const c = pick(m.name, m.cap); if (c != null) out.cap = c;
+    if (m.sub) out.sub = m.sub.map((s) => { const so = { ...s }; const sc = pick(s.name, s.cap); if (sc != null) so.cap = sc; return so; });
+    return out;
+  }) }));
+}
 function rosterToCsv(org, capacities = {}) {
   const cols = ["group", "team", "parent", "lead", "pm", "cap"];
   const lines = [cols.join(",")];
-  allResources(org).forEach((r) => { lines.push([r.group, r.label, r.parent || "", r.lead || "", r.pm || "", capacities[r.label] ?? ""].map(csvCell).join(",")); });
+  allResources(org).forEach((r) => { lines.push([r.group, r.label, r.parent || "", r.lead || "", r.pm || "", teamCap(r, capacities)].map(csvCell).join(",")); });
   return lines.join("\n");
 }
 // Rebuild the whole org from a roster CSV (same columns Export roster produces:
@@ -1371,7 +1380,7 @@ function csvToOrg(text) {
   const at = (r, n) => { const j = header.indexOf(n); return j >= 0 ? (r[j] || "").trim() : ""; };
   if (!header.includes("group") || !header.includes("team")) return { org: null, capacities: null, count: 0, error: 'CSV needs "group" and "team" columns.' };
   const hasCap = header.includes("cap");
-  const caps = {};
+  const capOf = (r) => { if (!hasCap) return undefined; const c = Number(at(r, "cap")); return c >= 1 ? Math.round(c) : undefined; };
   const groups = []; const gmap = {};
   const getGroup = (name) => { if (!gmap[name]) { gmap[name] = { name, members: [], _m: {} }; groups.push(gmap[name]); } return gmap[name]; };
   let count = 0;
@@ -1379,23 +1388,22 @@ function csvToOrg(text) {
     const r = rows[k];
     const group = at(r, "group"), team = at(r, "team");
     if (!group || !team) continue;
-    const parent = at(r, "parent"), lead = at(r, "lead"), pm = at(r, "pm");
-    if (hasCap) { const c = Number(at(r, "cap")); if (c >= 1) caps[team] = Math.round(c); }
+    const parent = at(r, "parent"), lead = at(r, "lead"), pm = at(r, "pm"), cap = capOf(r);
     const g = getGroup(group);
     if (parent) {
       let mem = g._m[parent];
       if (!mem) { mem = { name: parent, lead: "", sub: [] }; g._m[parent] = mem; g.members.push(mem); }
       if (!mem.sub) mem.sub = [];
-      mem.sub.push({ name: team, lead: lead || "", ...(pm ? { pm } : {}) });
+      mem.sub.push({ name: team, lead: lead || "", ...(pm ? { pm } : {}), ...(cap != null ? { cap } : {}) });
     } else {
       let mem = g._m[team];
-      if (!mem) { mem = { name: team, lead: lead || "" }; if (pm) mem.pm = pm; g._m[team] = mem; g.members.push(mem); }
-      else { if (lead) mem.lead = lead; if (pm) mem.pm = pm; }
+      if (!mem) { mem = { name: team, lead: lead || "" }; if (pm) mem.pm = pm; if (cap != null) mem.cap = cap; g._m[team] = mem; g.members.push(mem); }
+      else { if (lead) mem.lead = lead; if (pm) mem.pm = pm; if (cap != null) mem.cap = cap; }
     }
     count++;
   }
-  const org = groups.map((g) => ({ name: g.name, members: g.members.map((m) => { const mm = { name: m.name, lead: m.lead || "" }; if (m.pm) mm.pm = m.pm; if (m.sub && m.sub.length) mm.sub = m.sub; return mm; }) }));
-  return { org, capacities: hasCap ? caps : null, count, error: count ? "" : "No valid team rows found." };
+  const org = groups.map((g) => ({ name: g.name, members: g.members.map((m) => { const mm = { name: m.name, lead: m.lead || "" }; if (m.pm) mm.pm = m.pm; if (m.cap != null) mm.cap = m.cap; if (m.sub && m.sub.length) mm.sub = m.sub; return mm; }) }));
+  return { org, count, error: count ? "" : "No valid team rows found." };
 }
 function timelineToCsv(projects) {
   const cols = ["projectCode", "deliverable", "owner", "start", "weeks", "hours"];
@@ -1758,7 +1766,7 @@ function RosterImportModal({ onClose, onApply }) {
     if (!parsed.org || !parsed.count) { setErr(parsed.error || "Nothing to import."); return; }
     if (!window.confirm(`Replace the entire roster with ${parsed.org.length} group(s) / ${teams} team(s)? This overwrites the current roster.`)) return;
     setBusy(true); setErr("");
-    try { await onApply(parsed.org, parsed.capacities); onClose(); } catch (e) { setErr(e.message); setBusy(false); }
+    try { await onApply(parsed.org); onClose(); } catch (e) { setErr(e.message); setBusy(false); }
   };
   const field = { fontFamily: T.body, fontSize: 13, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, width: "100%" };
   const lbl = { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft, marginBottom: 5, display: "block" };
