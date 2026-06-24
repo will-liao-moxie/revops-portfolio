@@ -633,6 +633,7 @@ function Sequence({ projects, byId, onOpen }) {
   // Assign each project a vertical "track" within its lane. A project inherits the track of its
   // same-lane prerequisite (processed left-to-right by quarter) when that track is free, so chained
   // dependencies line up on one row and their arrows run straight instead of crossing.
+  const effPts = (p) => EFFORT_POINTS[p.effort] || EFFORT_POINTS.M;
   const trackOf = {}; const laneTracks = {};
   lanes.forEach((w) => {
     const usedByCol = {}; let maxTrack = 0;
@@ -642,7 +643,13 @@ function Sequence({ projects, byId, onOpen }) {
         const pre = (p.dependsOn || []).map((d) => (laneOfProj[d.id] === w ? trackOf[d.id] : null)).filter((t) => t != null);
         return { p, pref: pre.length ? Math.min(...pre) : null };
       });
-      cps.sort((a, b) => (a.pref == null ? 1 : b.pref == null ? -1 : a.pref - b.pref));
+      // dependency-aligned projects claim their prerequisite's track first; the rest sort large→small (effort)
+      cps.sort((a, b) => {
+        if (a.pref != null && b.pref != null) return a.pref - b.pref;
+        if (a.pref != null) return -1;
+        if (b.pref != null) return 1;
+        return effPts(b.p) - effPts(a.p);
+      });
       cps.forEach(({ p, pref }) => {
         let track = pref != null ? pref : 0;
         while (used.has(track)) track++;
