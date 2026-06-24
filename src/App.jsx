@@ -87,11 +87,12 @@ const DELIV_TYPE = {
 };
 const delivType = (stretch) => (stretch ? DELIV_TYPE.optional : DELIV_TYPE.required);
 const DEFAULT_CAP = 6;
-// comparative heatmap: scale a cell's color intensity by its value relative to the grid max
+// comparative traffic-light heatmap: relative to the grid max, light load = green, mid = amber, heavy = red
 function heatStyle(v, max) {
   if (!v) return null;
-  const t = max > 0 ? Math.min(1, v / max) : 0;
-  return { background: `rgba(46,139,112,${(0.14 + 0.78 * t).toFixed(3)})`, color: t > 0.5 ? "#fff" : T.ink };
+  const t = max > 0 ? v / max : 0;
+  const c = t > 0.66 ? { bg: "#C13434", fg: "#fff" } : t > 0.33 ? { bg: "#E0A21A", fg: "#3A2C05" } : { bg: "#2E8B57", fg: "#fff" };
+  return { background: c.bg, color: c.fg };
 }
 const TARGETS = ["TBD", "Q3 2026", "Q4 2026", "Q1 2027", "Q2 2027", "Q3 2027", "Q4 2027"];
 const QUARTERS = TARGETS.filter((t) => t !== "TBD");
@@ -696,14 +697,14 @@ function Sequence({ projects, byId, onOpen }) {
 }
 
 /* ---------- RESOURCING ---------- */
-const TEAM_W = 210, ALLOC_W = 66, CAP_W = 64;
-const FROZEN = { team: { position: "sticky", left: 0, zIndex: 2 }, alloc: { position: "sticky", left: TEAM_W, zIndex: 2 }, cap: { position: "sticky", left: TEAM_W + ALLOC_W, zIndex: 2, borderRight: `1px solid ${T.hairline}` } };
+const TEAM_W = 300, CAP_W = 64;
+const FROZEN = { team: { position: "sticky", left: 0, zIndex: 2 }, cap: { position: "sticky", left: TEAM_W, zIndex: 2, borderRight: `1px solid ${T.hairline}` } };
 function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSaveOrg, onOpen }) {
   const [managing, setManaging] = useState(false);
   const [rosterDirty, setRosterDirty] = useState(false);
   const [showRosterImport, setShowRosterImport] = useState(false);
   const [mode, setMode] = useState("quarter"); // "quarter" | "project"
-  const [colorMode, setColorMode] = useState("cap"); // "cap" (vs capacity) | "comparison" (heatmap by load)
+  const [colorMode, setColorMode] = useState("comparison"); // "comparison" (heatmap by load, default) | "cap" (vs capacity)
   const toggleManage = () => {
     if (managing && rosterDirty && !window.confirm("You have unsaved roster changes. Discard them?")) return;
     setManaging((m) => !m); setRosterDirty(false);
@@ -734,7 +735,6 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
   });
   const allRows = Object.values(byGroup).flat();
   const cellMax = Math.max(1, ...allRows.flatMap((r) => Object.values(mode === "project" ? r.unitsBy : mode === "category" ? r.unitsByCat : r.unitsByQ)));
-  const allocMax = Math.max(1, ...allRows.map((r) => (mode === "project" ? r.units : r.peak)));
   const tab = (k, label) => <button onClick={() => setMode(k)} style={{ fontFamily: T.body, fontSize: 12, fontWeight: mode === k ? 600 : 500, padding: "5px 11px", borderRadius: 999, border: `1px solid ${mode === k ? T.ink : T.hairline}`, background: mode === k ? T.ink : T.surface, color: mode === k ? "#fff" : T.inkSoft }}>{label}</button>;
 
   return (
@@ -742,7 +742,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
         <div>
           <h2 style={{ ...h2Style, marginBottom: 2 }}>Resourcing & allocation</h2>
-          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>{mode === "project" ? "Team roster × projects — each cell is that project's work units. Team and totals stay pinned; project columns scroll." : mode === "category" ? "Team roster × category — each cell sums a team's work units for that workstream, so you can see who carries each category." : "Team roster × quarter — each cell sums a team's work units for that quarter (scales to many projects). Capacity is per-quarter; cells over it are flagged."}</p>
+          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>{mode === "project" ? "Team roster × projects — each cell is that project's work units. The team column stays pinned; project columns scroll." : mode === "category" ? "Team roster × category — each cell sums a team's work units for that workstream, so you can see who carries each category." : "Team roster × quarter — each cell sums a team's work units for that quarter. Comparative coloring shades by relative load (green → amber → red); switch to vs capacity to flag cells over a team's cap."}</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.mono, fontSize: 11.5, color: T.inkSoft }}>
           <button onClick={exportRoster} title="Download the team roster as CSV" style={btnGhost}>↓ Export roster</button>
@@ -769,7 +769,6 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
           <thead>
             <tr>
               <th style={{ ...thStyle, ...FROZEN.team, zIndex: 3, textAlign: "left", minWidth: TEAM_W, width: TEAM_W }}>Team / resource</th>
-              <th style={{ ...thStyle, ...FROZEN.alloc, zIndex: 3, width: ALLOC_W }} title={mode === "quarter" ? "Peak quarter load" : "Total allocated work units"}>{mode === "quarter" ? "Peak" : "Alloc"}</th>
               {colorMode === "cap" && <th style={{ ...thStyle, ...FROZEN.cap, zIndex: 3, width: CAP_W }}>Cap</th>}
               {mode === "project"
                 ? projects.map((p) => { const ws = wsMeta(p.workstream); return <th key={p.id} style={thStyle}><button onClick={() => onOpen(p.id)} title={p.title} style={{ background: "none", border: "none", color: ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em" }}>{p.code}</button></th>; })
@@ -779,7 +778,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
             </tr>
           </thead>
           <tbody>
-            {(org || []).map((g) => <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name] || []} mode={mode} colorMode={colorMode} cellMax={cellMax} allocMax={allocMax} projects={projects} quarters={quarters} categories={categories} capacities={capacities} unlocked={unlocked} onSetCapacity={onSetCapacity} />)}
+            {(org || []).map((g) => <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name] || []} mode={mode} colorMode={colorMode} cellMax={cellMax} projects={projects} quarters={quarters} categories={categories} capacities={capacities} unlocked={unlocked} onSetCapacity={onSetCapacity} />)}
           </tbody>
         </table>
       </div>
@@ -787,29 +786,19 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
   );
 }
 
-function ResourceGroup({ group, rows, mode, colorMode, cellMax, allocMax, projects, quarters, categories, capacities, unlocked, onSetCapacity }) {
+function ResourceGroup({ group, rows, mode, colorMode, cellMax, projects, quarters, categories, capacities, unlocked, onSetCapacity }) {
   const compare = colorMode === "comparison";
-  const ncols = (mode === "project" ? projects.length : mode === "category" ? categories.length : quarters.length) + (compare ? 2 : 3);
+  const ncols = (mode === "project" ? projects.length : mode === "category" ? categories.length : quarters.length) + (compare ? 1 : 2);
   const chip = { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 };
   return (
     <>
       <tr><td colSpan={ncols} style={{ ...FROZEN.team, padding: "10px 14px 4px", background: T.paper, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkSoft }}>{group}</td></tr>
       {rows.map((r) => {
-        const cap = capacities[r.label] ?? DEFAULT_CAP; const over = r.peak > cap; const total = mode === "project" ? r.units : r.peak;
-        const allocHeat = compare ? heatStyle(total, allocMax) : null;
-        // pick the comparative cell heat for a value, or the cap-based style
-        const cellStyle = (v) => {
-          if (compare) return heatStyle(v, cellMax) || {};
-          return null;
-        };
+        const cap = capacities[r.label] ?? DEFAULT_CAP;
+        const cellStyle = (v) => (compare ? (heatStyle(v, cellMax) || {}) : null);
         return (
           <tr key={r.label} style={{ borderTop: `1px solid ${T.hairlineSoft}` }}>
             <td style={{ ...FROZEN.team, background: T.surface, padding: "9px 14px", fontSize: 13, width: TEAM_W }}><span style={{ fontWeight: 600 }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</span>{r.lead && <span style={{ marginLeft: 8, fontSize: 11, color: T.inkSoft }}>{r.lead}{r.pm ? ` · PM ${r.pm}` : ""}</span>}</td>
-            <td style={{ ...FROZEN.alloc, background: T.surface, textAlign: "center" }}>
-              {compare
-                ? (total ? <span title={`${total} work units`} style={{ ...chip, ...(allocHeat || { background: T.hairlineSoft, color: T.ink }) }}>{total}</span> : <span style={{ color: T.hairline, fontFamily: T.mono, fontSize: 13 }}>0</span>)
-                : <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: over ? "#C0463E" : (total ? T.ink : T.hairline) }}>{total}{over && " ⚠"}</span>}
-            </td>
             {!compare && <td style={{ ...FROZEN.cap, background: T.surface, textAlign: "center" }}>{unlocked ? <input type="number" min="1" value={cap} onChange={(e) => onSetCapacity(r.label, Math.max(1, Number(e.target.value) || 1))} style={{ width: 44, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "2px 4px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}</td>}
             {mode === "project"
               ? projects.map((p) => { const ws = wsMeta(p.workstream); const v = r.unitsBy[p.id]; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px" }}>{v != null ? <span title={`${p.code} · ${v} units`} style={{ ...chip, ...(compare ? cellStyle(v) : { background: ws.soft, color: ws.color }) }}>{v}</span> : null}</td>; })
