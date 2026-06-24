@@ -329,13 +329,13 @@ export default function App() {
     return null;
   };
   const addProject = async (proj) => { const res = await apiWrite("/api/projects", "POST", proj); if (res.projects) { setProjects(res.projects); cacheProjects(res.projects); } else await refresh(); setSelectedId(proj.id); };
-  // CSV import: create new rows, PATCH matched rows (upsert). Returns counts for the modal.
+  // CSV import: one bulk request applies every create + update in a single read-modify-write
+  // (44 sequential round-trips previously timed out / hit rate limits → "Failed to fetch").
   const importProjects = async (creates, updates) => {
-    let res;
-    for (const proj of creates) { res = await apiWrite("/api/projects", "POST", proj); }
-    for (const patch of updates) { const { _code, ...clean } = patch; res = await apiWrite("/api/projects", "PATCH", clean); }
+    const cleanUpdates = updates.map(({ _code, ...u }) => u);
+    const res = await apiWrite("/api/projects", "PUT", { creates, updates: cleanUpdates });
     if (res && res.projects) { setProjects(res.projects); cacheProjects(res.projects); } else await refresh();
-    return { created: creates.length, updated: updates.length };
+    return { created: res.created ?? creates.length, updated: res.updated ?? updates.length };
   };
   const removeProject = async (id) => {
     if (!window.confirm("Remove this project from the portfolio?")) return;

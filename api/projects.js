@@ -36,6 +36,30 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, projects: next });
     }
 
+    if (req.method === "PUT") {
+      // bulk upsert: apply all creates + updates in ONE read-modify-write (vs. a request per row)
+      const creates = Array.isArray(body.creates) ? body.creates : [];
+      const updates = Array.isArray(body.updates) ? body.updates : [];
+      const next = projects.slice();
+      const byId = new Map(next.map((p, i) => [p.id, i]));
+      let created = 0, updated = 0, skipped = 0;
+      for (const proj of creates) {
+        if (!proj.id || !proj.title || !proj.workstream || byId.has(proj.id)) { skipped++; continue; }
+        byId.set(proj.id, next.length);
+        next.push({ impact: 3, effort: "M", ...proj });
+        created++;
+      }
+      for (const patch of updates) {
+        const { id, ...rest } = patch || {};
+        const idx = id != null ? byId.get(id) : undefined;
+        if (idx == null) { skipped++; continue; }
+        next[idx] = { ...next[idx], ...rest };
+        updated++;
+      }
+      await saveState({ ...state, projects: next });
+      return res.status(200).json({ ok: true, projects: next, created, updated, skipped });
+    }
+
     if (req.method === "DELETE") {
       const { id } = body;
       if (!id) return res.status(400).json({ error: "id is required" });
