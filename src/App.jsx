@@ -783,24 +783,28 @@ function Resourcing({ projects, org, capacities, unlocked, onSaveOrg, onOpen }) 
   const projCols = useMemo(() => (mode === "project" ? [...projects].sort((a, b) => targetRank(a.targetWindow || "TBD") - targetRank(b.targetWindow || "TBD") || byCategoryThenNumber(a, b)) : projects), [projects, mode]);
   const projQSpans = useMemo(() => { const s = []; projCols.forEach((p) => { const q = p.targetWindow || "TBD"; const last = s[s.length - 1]; if (last && last.q === q) last.len++; else s.push({ q, len: 1 }); }); return s; }, [projCols]);
   const qStartIds = useMemo(() => { const set = new Set(); let prev = null; projCols.forEach((p, i) => { const q = p.targetWindow || "TBD"; if (i > 0 && q !== prev) set.add(p.id); prev = q; }); return set; }, [projCols]);
+  // by-category view: split each category into its quarters (category × quarter columns)
+  const catQCols = useMemo(() => categories.flatMap((c) => quarters.map((q) => ({ cat: c, q, key: c + "||" + q }))), [categories, quarters]);
+  const catSpans = useMemo(() => categories.map((c) => ({ cat: c, len: quarters.length })), [categories, quarters]);
+  const catQStart = useMemo(() => { const s = new Set(); categories.forEach((c, i) => { if (i > 0) s.add(c + "||" + quarters[0]); }); return s; }, [categories, quarters]);
   const resources = useMemo(() => allResources(org), [org]);
   const byGroup = {};
   (org || []).forEach((g) => { byGroup[g.name] = []; });
   resources.forEach((r) => {
-    const unitsBy = {}, unitsByQ = {}, unitsByCat = {}; let units = 0;
+    const unitsBy = {}, unitsByQ = {}, unitsByCat = {}, unitsByCatQ = {}; let units = 0;
     projects.forEach((p) => {
       const mine = projectAssignments(p).filter((a) => matchesResource(r, a.owner));
       if (!mine.length) return;
       const u = mine.reduce((s, a) => s + a.pts, 0);
       unitsBy[p.id] = u; units += u;
-      mine.forEach((a) => { unitsByQ[a.quarter] = (unitsByQ[a.quarter] || 0) + a.pts; });
       const c = p.workstream || "Other"; unitsByCat[c] = (unitsByCat[c] || 0) + u;
+      mine.forEach((a) => { unitsByQ[a.quarter] = (unitsByQ[a.quarter] || 0) + a.pts; const k = c + "||" + a.quarter; unitsByCatQ[k] = (unitsByCatQ[k] || 0) + a.pts; });
     });
     const peak = Math.max(0, ...Object.values(unitsByQ));
-    (byGroup[r.group] = byGroup[r.group] || []).push({ ...r, unitsBy, unitsByQ, unitsByCat, units, peak });
+    (byGroup[r.group] = byGroup[r.group] || []).push({ ...r, unitsBy, unitsByQ, unitsByCat, unitsByCatQ, units, peak });
   });
   const allRows = Object.values(byGroup).flat();
-  const cellMax = Math.max(1, ...allRows.flatMap((r) => Object.values(mode === "project" ? r.unitsBy : mode === "category" ? r.unitsByCat : r.unitsByQ)));
+  const cellMax = Math.max(1, ...allRows.flatMap((r) => Object.values(mode === "project" ? r.unitsBy : mode === "category" ? r.unitsByCatQ : r.unitsByQ)));
   // effective cap per team = unsaved overlay → team's stored cap → legacy capacities map → default
   const effCaps = {}; allRows.forEach((r) => { effCaps[r.label] = capDraft[r.label] != null ? capDraft[r.label] : teamCap(r, capacities); });
   const tab = (k, label) => <button onClick={() => setMode(k)} style={{ fontFamily: T.body, fontSize: 12, fontWeight: mode === k ? 600 : 500, padding: "5px 11px", borderRadius: 999, border: `1px solid ${mode === k ? T.ink : T.hairline}`, background: mode === k ? T.ink : T.surface, color: mode === k ? "#fff" : T.inkSoft }}>{label}</button>;
@@ -810,7 +814,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSaveOrg, onOpen }) 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
         <div>
           <h2 style={{ ...h2Style, marginBottom: 2 }}>Resourcing & allocation</h2>
-          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>{mode === "project" ? "Team roster × projects — each cell is that project's hours. The team column stays pinned; project columns scroll." : mode === "category" ? "Team roster × category — each cell sums a team's hours for that workstream, so you can see who carries each category." : "Team roster × quarter — each cell sums a team's hours for that quarter. vs-capacity coloring is a traffic light against each team's hour cap (green under, amber near, red over ⚠); switch to comparative to shade by relative load instead."}</p>
+          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>{mode === "project" ? "Team roster × projects — each cell is that project's hours. The team column stays pinned; project columns scroll." : mode === "category" ? "Team roster × category × quarter — each category is split into its quarters, so you can see who carries each category over time." : "Team roster × quarter — each cell sums a team's hours for that quarter. vs-capacity coloring is a traffic light against each team's hour cap (green under, amber near, red over ⚠); switch to comparative to shade by relative load instead."}</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.mono, fontSize: 11.5, color: T.inkSoft }}>
           <button onClick={exportRoster} title="Download the team roster as CSV" style={btnGhost}>↓ Export roster</button>
@@ -844,11 +848,13 @@ function Resourcing({ projects, org, capacities, unlocked, onSaveOrg, onOpen }) 
       <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760, fontFamily: T.body }}>
           <thead>
-            {mode === "project" && (
+            {(mode === "project" || mode === "category") && (
               <tr>
                 <th style={{ ...thStyle, ...FROZEN.team, zIndex: 3, background: T.paper, minWidth: TEAM_W, width: TEAM_W }} />
                 {colorMode === "cap" && <th style={{ ...thStyle, ...FROZEN.cap, zIndex: 3, background: T.paper, width: CAP_W }} />}
-                {projQSpans.map((s, i) => <th key={s.q + i} colSpan={s.len} style={{ ...thStyle, textAlign: "center", color: T.ink, background: T.paper, borderLeft: `2px solid ${T.hairline}` }}>{s.q.toUpperCase()}</th>)}
+                {mode === "project"
+                  ? projQSpans.map((s, i) => <th key={s.q + i} colSpan={s.len} style={{ ...thStyle, textAlign: "center", color: T.ink, background: T.paper, borderLeft: `2px solid ${T.hairline}` }}>{s.q.toUpperCase()}</th>)
+                  : catSpans.map((s, i) => <th key={s.cat} colSpan={s.len} style={{ ...thStyle, textAlign: "center", color: wsMeta(s.cat).color, background: T.paper, borderLeft: i > 0 ? `2px solid ${T.hairline}` : undefined, whiteSpace: "normal", lineHeight: 1.2, minWidth: 96 }}>{s.cat}</th>)}
               </tr>
             )}
             <tr>
@@ -857,12 +863,12 @@ function Resourcing({ projects, org, capacities, unlocked, onSaveOrg, onOpen }) 
               {mode === "project"
                 ? projCols.map((p) => { const ws = wsMeta(p.workstream); return <th key={p.id} style={{ ...thStyle, borderLeft: qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}><button onClick={() => onOpen(p.id)} title={`${p.title} · ${p.targetWindow || "TBD"}`} style={{ background: "none", border: "none", color: ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em" }}>{p.code}</button></th>; })
                 : mode === "category"
-                  ? categories.map((c) => { const ws = wsMeta(c); return <th key={c} title={c} style={{ ...thStyle, color: ws.color, minWidth: 96, whiteSpace: "normal", lineHeight: 1.2 }}>{c}</th>; })
+                  ? catQCols.map((col) => <th key={col.key} title={`${col.cat} · ${col.q}`} style={{ ...thStyle, borderLeft: catQStart.has(col.key) ? `2px solid ${T.hairline}` : undefined }}>{col.q.replace(" 20", " ")}</th>)
                   : quarters.map((q) => <th key={q} style={thStyle}>{q}</th>)}
             </tr>
           </thead>
           <tbody>
-            {(org || []).map((g) => <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name] || []} mode={mode} colorMode={colorMode} cellMax={cellMax} projects={projCols} qStartIds={qStartIds} quarters={quarters} categories={categories} capacities={effCaps} unlocked={unlocked} onSetCapacity={editCap} />)}
+            {(org || []).map((g) => <ResourceGroup key={g.name} group={g.name} rows={byGroup[g.name] || []} mode={mode} colorMode={colorMode} cellMax={cellMax} projects={projCols} qStartIds={qStartIds} quarters={quarters} categories={categories} catQCols={catQCols} catQStart={catQStart} capacities={effCaps} unlocked={unlocked} onSetCapacity={editCap} />)}
           </tbody>
         </table>
       </div>
@@ -870,9 +876,9 @@ function Resourcing({ projects, org, capacities, unlocked, onSaveOrg, onOpen }) 
   );
 }
 
-function ResourceGroup({ group, rows, mode, colorMode, cellMax, projects, qStartIds, quarters, categories, capacities, unlocked, onSetCapacity }) {
+function ResourceGroup({ group, rows, mode, colorMode, cellMax, projects, qStartIds, quarters, categories, catQCols, catQStart, capacities, unlocked, onSetCapacity }) {
   const compare = colorMode === "comparison";
-  const ncols = (mode === "project" ? projects.length : mode === "category" ? categories.length : quarters.length) + (compare ? 1 : 2);
+  const ncols = (mode === "project" ? projects.length : mode === "category" ? catQCols.length : quarters.length) + (compare ? 1 : 2);
   const chip = { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 6, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700 };
   return (
     <>
@@ -894,7 +900,7 @@ function ResourceGroup({ group, rows, mode, colorMode, cellMax, projects, qStart
             {mode === "project"
               ? projects.map((p) => { const v = r.unitsBy[p.id]; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px", borderLeft: qStartIds && qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}>{v != null ? <span title={`${p.code} · ${p.targetWindow || "TBD"} · ${v}h`} style={{ ...chip, ...cellStyle(v) }}>{v}</span> : null}</td>; })
               : mode === "category"
-                ? categories.map((c) => { const v = r.unitsByCat[c] || 0; return <td key={c} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={`${c} · ${v}h`} style={{ ...chip, ...cellStyle(v) }}>{v}</span> : null}</td>; })
+                ? catQCols.map((col) => { const v = r.unitsByCatQ[col.key] || 0; return <td key={col.key} style={{ textAlign: "center", padding: "9px 6px", borderLeft: catQStart.has(col.key) ? `2px solid ${T.hairline}` : undefined }}>{v ? <span title={`${col.cat} · ${col.q} · ${v}h`} style={{ ...chip, ...cellStyle(v) }}>{v}</span> : null}</td>; })
                 : quarters.map((q) => { const v = r.unitsByQ[q] || 0; const oc = capColored && v > cap; return <td key={q} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={compare ? `${q} · ${v}h` : `${q} · ${v}/${cap}h`} style={{ ...chip, ...cellStyle(v) }}>{v}{oc ? " ⚠" : ""}</span> : null}</td>; })}
           </tr>
         );
