@@ -653,7 +653,7 @@ function Sequence({ projects, byId, onOpen }) {
       </div>
       <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 12, overflowX: "auto" }}>
         <svg width={Math.max(width, 280)} height={height} style={{ display: "block" }} role="img" aria-label={`Sequence by ${g.label} and quarter`}>
-          <defs><marker id="seqArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#A33D3D" /></marker></defs>
+          <defs><marker id="seqArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#A33D3D" fillOpacity="0.65" /></marker></defs>
           {/* lane bands + labels */}
           {lanes.map((w, li) => {
             const lc = g.color(w);
@@ -662,7 +662,9 @@ function Sequence({ projects, byId, onOpen }) {
                 {li % 2 === 1 && <rect x={0} y={laneY[w]} width={width} height={laneH[w]} fill={T.paper} />}
                 <rect x={0} y={laneY[w]} width={4} height={laneH[w]} fill={lc} />
                 <line x1={0} y1={laneY[w]} x2={width} y2={laneY[w]} stroke={T.hairline} />
-                <text x={12} y={laneY[w] + laneH[w] / 2 + 4} fontSize="11.5" fontFamily={T.body} fontWeight="700" fill={lc}>{trunc(g.name(w), 18)}</text>
+                <foreignObject x={8} y={laneY[w]} width={GUTTER - 16} height={laneH[w]}>
+                  <div xmlns="http://www.w3.org/1999/xhtml" style={{ height: "100%", display: "flex", alignItems: "center", fontFamily: T.body, fontWeight: 700, fontSize: 11.5, lineHeight: 1.18, color: lc, wordBreak: "break-word" }}>{g.name(w)}</div>
+                </foreignObject>
               </g>
             );
           })}
@@ -1157,17 +1159,24 @@ function RoleEditor({ items, accent, org, onCommit }) {
   useEffect(() => { setList(items); }, [items]);
   const push = (next) => { setList(next); onCommit(next); };
   const opts = allResources(org);
+  // labels aren't unique across groups (e.g. two "Finance" teams). Store the lead to disambiguate
+  // a duplicated label so the pick resolves to the team you chose, not the first match.
+  const labelDup = {}; opts.forEach((o) => { const k = normName(o.label); labelDup[k] = (labelDup[k] || 0) + 1; });
+  const ownerValue = (o) => (o.lead && labelDup[normName(o.label)] > 1 ? o.lead : o.label);
   const sel = { fontFamily: T.body, fontSize: 12.5, fontWeight: 600, padding: "4px 6px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {list.map((r, i) => {
         const cur = r.who || "";
-        const matched = opts.find((o) => normName(o.label) === normName(cur) || normName(o.lead) === normName(cur));
-        const selVal = matched ? matched.label : (cur ? "__cur__" : "");
+        const byLead = opts.findIndex((o) => o.lead && normName(o.lead) === normName(cur));
+        const mIdx = byLead >= 0 ? byLead : opts.findIndex((o) => normName(o.label) === normName(cur));
+        const matched = mIdx >= 0 ? opts[mIdx] : null;
+        const selVal = matched ? String(mIdx) : (cur ? "__cur__" : "");
         const onWho = (v) => {
           if (v === "__custom__") { const c = window.prompt("Resource name (team or person):", cur); if (c != null) push(list.map((x, j) => j === i ? { ...x, who: c.trim() } : x)); return; }
           if (v === "__cur__") return;
-          push(list.map((x, j) => j === i ? { ...x, who: v } : x));
+          const o = opts[+v]; if (!o) return;
+          push(list.map((x, j) => j === i ? { ...x, who: ownerValue(o) } : x));
         };
         return (
           <div key={i} style={{ display: "flex", gap: 7, alignItems: "flex-start" }}>
@@ -1177,7 +1186,7 @@ function RoleEditor({ items, accent, org, onCommit }) {
                 <select value={selVal} onChange={(e) => onWho(e.target.value)} style={{ ...sel, flex: 1, minWidth: 0, maxWidth: "100%" }}>
                   {!matched && cur && <option value="__cur__">{cur} (custom)</option>}
                   {!cur && <option value="" disabled>Select a team / resource…</option>}
-                  {opts.map((o) => <option key={o.group + o.label} value={o.label}>{o.group} · {o.label}{o.lead ? ` · ${o.lead}` : ""}</option>)}
+                  {opts.map((o, idx) => <option key={idx} value={String(idx)}>{o.group} · {o.label}{o.lead ? ` · ${o.lead}` : ""}</option>)}
                   <option value="__custom__">+ Custom name…</option>
                 </select>
                 <MiniSelect value={r.effort || "M"} options={EFFORTS} onChange={(v) => push(list.map((x, j) => j === i ? { ...x, effort: v } : x))} />
@@ -1502,6 +1511,8 @@ function TimelineEditor({ items, deliverables, org, onCommit }) {
   const commit = (next) => { setList(next); onCommit(next); };
   const upd = (i, patch) => commit(list.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const opts = allResources(org);
+  const labelDup = {}; opts.forEach((o) => { const k = normName(o.label); labelDup[k] = (labelDup[k] || 0) + 1; });
+  const ownerValue = (o) => (o.lead && labelDup[normName(o.label)] > 1 ? o.lead : o.label);
   const delTexts = deliverables.map((d) => d.text);
   const split = (s) => { const m = (s || "").match(/(Q[1-4]\s*\d{4})\s*W\s*(\d+)/i); return m ? { q: m[1].replace(/\s+/g, " "), wk: Math.max(1, Math.min(13, +m[2])) } : { q: QUARTERS[0], wk: 1 }; };
   const sel = { fontFamily: T.body, fontSize: 12, padding: "4px 6px", borderRadius: 6, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink };
@@ -1512,7 +1523,9 @@ function TimelineEditor({ items, deliverables, org, onCommit }) {
       {list.map((t, i) => {
         const { q, wk } = split(t.start);
         const cur = t.owner || "";
-        const mo = opts.find((o) => normName(o.label) === normName(cur) || normName(o.lead) === normName(cur));
+        const byLead = opts.findIndex((o) => o.lead && normName(o.lead) === normName(cur));
+        const moIdx = byLead >= 0 ? byLead : opts.findIndex((o) => normName(o.label) === normName(cur));
+        const mo = moIdx >= 0 ? opts[moIdx] : null;
         const delKnown = delTexts.some((x) => normDel(x) === normDel(t.deliverable));
         return (
           <div key={i} style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap", borderBottom: `1px solid ${T.hairlineSoft}`, paddingBottom: 8 }}>
@@ -1523,10 +1536,10 @@ function TimelineEditor({ items, deliverables, org, onCommit }) {
               </select>
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 2, flex: "1 1 170px", minWidth: 140 }}>{lbl("OWNER")}
-              <select value={mo ? mo.label : (cur ? "__cur__" : "")} onChange={(e) => { const v = e.target.value; if (v === "__custom__") { const c = window.prompt("Owner (team or person):", cur); if (c != null) upd(i, { owner: c.trim() }); } else if (v !== "__cur__") upd(i, { owner: v }); }} style={sel}>
+              <select value={mo ? String(moIdx) : (cur ? "__cur__" : "")} onChange={(e) => { const v = e.target.value; if (v === "__custom__") { const c = window.prompt("Owner (team or person):", cur); if (c != null) upd(i, { owner: c.trim() }); } else if (v !== "__cur__") { const o = opts[+v]; if (o) upd(i, { owner: ownerValue(o) }); } }} style={sel}>
                 {!mo && cur && <option value="__cur__">{cur} (off-roster)</option>}
                 {!cur && <option value="" disabled>Select…</option>}
-                {opts.map((o) => <option key={o.group + o.label} value={o.label}>{o.group} · {o.label}{o.lead ? ` · ${o.lead}` : ""}</option>)}
+                {opts.map((o, idx) => <option key={idx} value={String(idx)}>{o.group} · {o.label}{o.lead ? ` · ${o.lead}` : ""}</option>)}
                 <option value="__custom__">+ Custom…</option>
               </select>
             </label>
