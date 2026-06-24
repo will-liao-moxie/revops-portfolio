@@ -695,6 +695,7 @@ const FROZEN = { team: { position: "sticky", left: 0, zIndex: 2 }, alloc: { posi
 function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSaveOrg, onOpen }) {
   const [managing, setManaging] = useState(false);
   const [rosterDirty, setRosterDirty] = useState(false);
+  const [showRosterImport, setShowRosterImport] = useState(false);
   const [mode, setMode] = useState("quarter"); // "quarter" | "project"
   const toggleManage = () => {
     if (managing && rosterDirty && !window.confirm("You have unsaved roster changes. Discard them?")) return;
@@ -735,6 +736,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.mono, fontSize: 11.5, color: T.inkSoft }}>
           <button onClick={exportRoster} title="Download the team roster as CSV" style={btnGhost}>↓ Export roster</button>
+          {unlocked && <button onClick={() => setShowRosterImport(true)} title="Replace the whole roster from a CSV" style={btnGhost}>↑ Import roster</button>}
           {unlocked && <button onClick={toggleManage} style={btnGhost}>{managing ? "Done" : "✎ Manage teams"}</button>}
           <span style={{ letterSpacing: "0.06em" }}>WORK UNITS</span>
           {EFFORTS.map((s) => <span key={s} style={{ padding: "2px 7px", borderRadius: 6, background: T.hairlineSoft, color: T.ink, fontWeight: 700 }}>{s}={EFFORT_POINTS[s]}</span>)}
@@ -746,6 +748,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSetCapacity, onSave
         {tab("quarter", "By quarter")}{tab("category", "By category")}{tab("project", "By project")}
       </div>
 
+      {showRosterImport && <RosterImportModal onClose={() => setShowRosterImport(false)} onApply={onSaveOrg} />}
       {managing && unlocked && <OrgEditor org={org} onSave={onSaveOrg} onDirty={setRosterDirty} />}
 
       <div style={{ background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 12, overflowX: "auto" }}>
@@ -1295,6 +1298,38 @@ function rosterToCsv(org) {
   allResources(org).forEach((r) => { lines.push([r.group, r.label, r.parent || "", r.lead || "", r.pm || ""].map(csvCell).join(",")); });
   return lines.join("\n");
 }
+// Rebuild the whole org from a roster CSV (same columns Export roster produces:
+// group, team, parent, lead, pm). Rows with a `parent` are sub-teams of that member.
+function csvToOrg(text) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) return { org: null, count: 0, error: "Need a header row and at least one team row." };
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const at = (r, n) => { const j = header.indexOf(n); return j >= 0 ? (r[j] || "").trim() : ""; };
+  if (!header.includes("group") || !header.includes("team")) return { org: null, count: 0, error: 'CSV needs "group" and "team" columns.' };
+  const groups = []; const gmap = {};
+  const getGroup = (name) => { if (!gmap[name]) { gmap[name] = { name, members: [], _m: {} }; groups.push(gmap[name]); } return gmap[name]; };
+  let count = 0;
+  for (let k = 1; k < rows.length; k++) {
+    const r = rows[k];
+    const group = at(r, "group"), team = at(r, "team");
+    if (!group || !team) continue;
+    const parent = at(r, "parent"), lead = at(r, "lead"), pm = at(r, "pm");
+    const g = getGroup(group);
+    if (parent) {
+      let mem = g._m[parent];
+      if (!mem) { mem = { name: parent, lead: "", sub: [] }; g._m[parent] = mem; g.members.push(mem); }
+      if (!mem.sub) mem.sub = [];
+      mem.sub.push({ name: team, lead: lead || "", ...(pm ? { pm } : {}) });
+    } else {
+      let mem = g._m[team];
+      if (!mem) { mem = { name: team, lead: lead || "" }; if (pm) mem.pm = pm; g._m[team] = mem; g.members.push(mem); }
+      else { if (lead) mem.lead = lead; if (pm) mem.pm = pm; }
+    }
+    count++;
+  }
+  const org = groups.map((g) => ({ name: g.name, members: g.members.map((m) => { const mm = { name: m.name, lead: m.lead || "" }; if (m.pm) mm.pm = m.pm; if (m.sub && m.sub.length) mm.sub = m.sub; return mm; }) }));
+  return { org, count, error: count ? "" : "No valid team rows found." };
+}
 function timelineToCsv(projects) {
   const cols = ["projectCode", "deliverable", "owner", "start", "weeks", "effort"];
   const lines = [cols.join(",")];
@@ -1635,6 +1670,42 @@ function TimelineImportModal({ heading, deliverables, onClose, onApply }) {
         {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "8px 0 0" }}>{err}</p>}
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           <button onClick={apply} disabled={!parsed.tasks.length} style={{ ...btnSolid, opacity: parsed.tasks.length ? 1 : 0.5 }}>Import {parsed.tasks.length || ""} deliverable{parsed.tasks.length === 1 ? "" : "s"}</button>
+          <button onClick={onClose} style={btnGhost}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- ROSTER IMPORT MODAL (replace the whole org from CSV) ---------- */
+function RosterImportModal({ onClose, onApply }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const parsed = useMemo(() => csvToOrg(text), [text]);
+  const teams = parsed.org ? parsed.org.reduce((s, g) => s + g.members.length + g.members.reduce((a, m) => a + ((m.sub || []).length), 0), 0) : 0;
+  const onFile = (e) => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { setText(String(rd.result || "")); setErr(""); }; rd.readAsText(f); e.target.value = ""; };
+  const apply = async () => {
+    if (!parsed.org || !parsed.count) { setErr(parsed.error || "Nothing to import."); return; }
+    if (!window.confirm(`Replace the entire roster with ${parsed.org.length} group(s) / ${teams} team(s)? This overwrites the current roster.`)) return;
+    setBusy(true); setErr("");
+    try { await onApply(parsed.org); onClose(); } catch (e) { setErr(e.message); setBusy(false); }
+  };
+  const field = { fontFamily: T.body, fontSize: 13, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, width: "100%" };
+  const lbl = { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft, marginBottom: 5, display: "block" };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, width: "min(640px, 100%)", maxHeight: "88vh", overflowY: "auto", padding: 26, fontFamily: T.body }}>
+        <h2 style={{ ...h2Style, marginTop: 0 }}>Import roster</h2>
+        <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "6px 0 14px" }}>Paste or upload a roster CSV — same columns as <strong>Export roster</strong>: <code style={codeChip}>group, team, parent, lead, pm</code>. One row per team. Leave <code style={codeChip}>parent</code> blank for a top-level team; set it to a team's name to nest a sub-team under it. This <strong>replaces the entire roster</strong>.</p>
+        <label style={lbl}>UPLOAD .CSV</label>
+        <input type="file" accept=".csv,text/csv" onChange={onFile} style={{ fontSize: 12.5, marginBottom: 10 }} />
+        <label style={lbl}>OR PASTE CSV</label>
+        <textarea value={text} onChange={(e) => { setText(e.target.value); setErr(""); }} rows={8} placeholder={"group,team,parent,lead,pm\nOperations,Finance,,Chrissy Lo,Robin Soukup\nB2B Marketing,B2B Marketing,,Brandi Eppolito,Megan Taggart\nB2B Marketing,Events,B2B Marketing,Rachel Weinstein,"} style={{ ...field, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, resize: "vertical" }} />
+        <div style={{ fontSize: 12.5, color: parsed.error ? "#A33D3D" : T.inkSoft, margin: "8px 0 0" }}>{text.trim() ? (parsed.error || `${parsed.org.length} group${parsed.org.length === 1 ? "" : "s"}, ${teams} team${teams === 1 ? "" : "s"} ready: ${parsed.org.map((g) => g.name).join(", ")}`) : "Waiting for CSV…"}</div>
+        {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "8px 0 0" }}>{err}</p>}
+        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+          <button onClick={apply} disabled={busy || !parsed.count} style={{ ...btnSolid, opacity: busy || !parsed.count ? 0.5 : 1 }}>{busy ? "Importing…" : `Replace roster (${teams || ""})`}</button>
           <button onClick={onClose} style={btnGhost}>Cancel</button>
         </div>
       </div>
