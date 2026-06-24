@@ -405,7 +405,9 @@ export default function App() {
               {workstreams.map((w) => {
                 const meta = w === "All" ? null : wsMeta(w);
                 const active = wsFilter === w;
-                return <button key={w} onClick={() => setWsFilter(w)} style={{ fontFamily: T.body, fontSize: 12, fontWeight: 500, padding: "5px 11px", borderRadius: 999, border: `1px solid ${active ? (w === "All" ? T.ink : meta.color) : T.hairline}`, background: active ? (w === "All" ? T.ink : meta.soft) : T.surface, color: active ? (w === "All" ? "#fff" : meta.color) : T.inkSoft }}>{w}</button>;
+                const count = w === "All" ? projects.length : projects.filter((p) => p.workstream === w).length;
+                const fg = active ? (w === "All" ? "#fff" : meta.color) : T.inkSoft;
+                return <button key={w} onClick={() => setWsFilter(w)} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontFamily: T.body, fontSize: 12, fontWeight: 500, padding: "5px 11px", borderRadius: 999, border: `1px solid ${active ? (w === "All" ? T.ink : meta.color) : T.hairline}`, background: active ? (w === "All" ? T.ink : meta.soft) : T.surface, color: fg }}>{w}<span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, padding: "0 5px", borderRadius: 999, background: active ? (w === "All" ? "rgba(255,255,255,.22)" : "rgba(0,0,0,.06)") : T.hairlineSoft, color: fg }}>{count}</span></button>;
               })}
             </div>
           )}
