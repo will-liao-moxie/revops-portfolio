@@ -209,6 +209,12 @@ function resolveResource(org, who) { const n = normName(who); return allResource
 function resourcePath(org, who) { const r = resolveResource(org, who); return r ? [r.group, r.label, r.lead].filter(Boolean).join(" · ") : who; }
 // like resourcePath, but appends "· PM <name>" when the resource has a project manager (used in the timeline)
 function resourcePathPM(org, who) { const r = resolveResource(org, who); if (!r) return who; const base = [r.group, r.label, r.lead].filter(Boolean).join(" · "); return r.pm ? `${base} · PM ${r.pm}` : base; }
+// owner split for the timeline: team identity on one line, the people (lead + PM) on the next
+function resourceLines(org, who) {
+  const r = resolveResource(org, who);
+  if (!r) return { team: who, people: "" };
+  return { team: [r.group, r.label].filter(Boolean).join(" · "), people: [r.lead, r.pm ? `PM ${r.pm}` : ""].filter(Boolean).join(" · ") };
+}
 function allResources(org) {
   const out = [];
   (org || []).forEach((g) => {
@@ -402,6 +408,8 @@ export default function App() {
   };
   const setCapacity = (label, value) => { const c = { ...capacities, [label]: value }; setCapacities(c); persistSettings({ capacities: c }); };
   const saveCapacities = (caps) => { setCapacities(caps); return persistSettings({ capacities: caps }); };
+  // roster import: save org (and capacities, when the CSV carried a cap column) in one write
+  const saveRoster = (nextOrg, nextCaps) => { setOrg(nextOrg); const caps = nextCaps && typeof nextCaps === "object" ? nextCaps : capacities; if (nextCaps && typeof nextCaps === "object") setCapacities(caps); return persistSettings({ org: nextOrg, capacities: caps }); };
   const setWeekly = (person, value) => { const c = { ...weeklyCap, [person]: value }; setWeeklyCap(c); persistSettings({ weeklyCap: c }); };
   const saveOrg = (nextOrg) => { setOrg(nextOrg); return persistSettings({ org: nextOrg }); };
   const importSchedule = async (text) => {
@@ -491,7 +499,7 @@ export default function App() {
           )
             : view === "matrix" ? <Matrix projects={visible} onOpen={setSelectedId} />
               : view === "sequence" ? <Sequence projects={visible} byId={byId} onOpen={setSelectedId} />
-                : view === "resourcing" ? <Resourcing projects={projects} org={org} capacities={capacities} unlocked={unlocked} onSaveCapacities={saveCapacities} onSaveOrg={saveOrg} onOpen={setSelectedId} />
+                : view === "resourcing" ? <Resourcing projects={projects} org={org} capacities={capacities} unlocked={unlocked} onSaveCapacities={saveCapacities} onSaveOrg={saveOrg} onSaveRoster={saveRoster} onOpen={setSelectedId} />
                   : <Schedule projects={projects} org={org} unlocked={unlocked} onImport={importSchedule} onOpen={setSelectedId} />}
       </main>
 
@@ -707,7 +715,7 @@ function CapInput({ value, onCommit }) {
   return <input type="number" min="1" value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} style={{ width: 60, fontFamily: T.mono, fontSize: 12, fontWeight: 600, padding: "3px 6px", border: `1px solid ${T.hairline}`, borderRadius: 6, color: T.ink, background: T.surface, textAlign: "center" }} />;
 }
 const FROZEN = { team: { position: "sticky", left: 0, zIndex: 2 }, cap: { position: "sticky", left: TEAM_W, zIndex: 2, borderRight: `1px solid ${T.hairline}` } };
-function Resourcing({ projects, org, capacities, unlocked, onSaveCapacities, onSaveOrg, onOpen }) {
+function Resourcing({ projects, org, capacities, unlocked, onSaveCapacities, onSaveOrg, onSaveRoster, onOpen }) {
   const [managing, setManaging] = useState(false);
   const [rosterDirty, setRosterDirty] = useState(false);
   const [showRosterImport, setShowRosterImport] = useState(false);
@@ -731,7 +739,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSaveCapacities, onS
     setManaging((m) => !m); setRosterDirty(false);
   };
   const exportRoster = () => {
-    const blob = new Blob([rosterToCsv(org)], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob([rosterToCsv(org, capacities)], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = "revops-roster.csv"; a.click();
     URL.revokeObjectURL(url);
@@ -786,7 +794,7 @@ function Resourcing({ projects, org, capacities, unlocked, onSaveCapacities, onS
         <button onClick={() => setColorMode("comparison")} style={{ fontFamily: T.body, fontSize: 12, fontWeight: colorMode === "comparison" ? 600 : 500, padding: "5px 11px", borderRadius: 999, border: `1px solid ${colorMode === "comparison" ? T.ink : T.hairline}`, background: colorMode === "comparison" ? T.ink : T.surface, color: colorMode === "comparison" ? "#fff" : T.inkSoft }}>comparative</button>
       </div>
 
-      {showRosterImport && <RosterImportModal onClose={() => setShowRosterImport(false)} onApply={onSaveOrg} />}
+      {showRosterImport && <RosterImportModal onClose={() => setShowRosterImport(false)} onApply={onSaveRoster} />}
       {managing && unlocked && <OrgEditor org={org} onSave={onSaveOrg} onDirty={setRosterDirty} />}
 
       {unlocked && capDirty && (
@@ -1018,7 +1026,7 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
                         <Avatar name={(res && res.lead) || r.who} color={ws.color} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
-                            <span style={{ fontWeight: 600 }}>{resourcePath(org, r.who)}</span>
+                            <span style={{ fontWeight: 600 }}>{resourcePathPM(org, r.who)}</span>
                             <EffortChip effort={r.effort} />
                           </div>
                           {r.what && <div style={{ color: T.inkSoft, lineHeight: 1.45, marginTop: 2 }}><Linkify>{r.what}</Linkify></div>}
@@ -1347,20 +1355,23 @@ function projectsToCsv(projects) {
   });
   return lines.join("\n");
 }
-function rosterToCsv(org) {
-  const cols = ["group", "team", "parent", "lead", "pm"];
+function rosterToCsv(org, capacities = {}) {
+  const cols = ["group", "team", "parent", "lead", "pm", "cap"];
   const lines = [cols.join(",")];
-  allResources(org).forEach((r) => { lines.push([r.group, r.label, r.parent || "", r.lead || "", r.pm || ""].map(csvCell).join(",")); });
+  allResources(org).forEach((r) => { lines.push([r.group, r.label, r.parent || "", r.lead || "", r.pm || "", capacities[r.label] ?? ""].map(csvCell).join(",")); });
   return lines.join("\n");
 }
 // Rebuild the whole org from a roster CSV (same columns Export roster produces:
-// group, team, parent, lead, pm). Rows with a `parent` are sub-teams of that member.
+// group, team, parent, lead, pm, cap). Rows with a `parent` are sub-teams of that member.
+// Returns capacities only if the CSV carried a `cap` column (else null → keep existing caps).
 function csvToOrg(text) {
   const rows = parseCSV(text);
-  if (rows.length < 2) return { org: null, count: 0, error: "Need a header row and at least one team row." };
+  if (rows.length < 2) return { org: null, capacities: null, count: 0, error: "Need a header row and at least one team row." };
   const header = rows[0].map((h) => h.trim().toLowerCase());
   const at = (r, n) => { const j = header.indexOf(n); return j >= 0 ? (r[j] || "").trim() : ""; };
-  if (!header.includes("group") || !header.includes("team")) return { org: null, count: 0, error: 'CSV needs "group" and "team" columns.' };
+  if (!header.includes("group") || !header.includes("team")) return { org: null, capacities: null, count: 0, error: 'CSV needs "group" and "team" columns.' };
+  const hasCap = header.includes("cap");
+  const caps = {};
   const groups = []; const gmap = {};
   const getGroup = (name) => { if (!gmap[name]) { gmap[name] = { name, members: [], _m: {} }; groups.push(gmap[name]); } return gmap[name]; };
   let count = 0;
@@ -1369,6 +1380,7 @@ function csvToOrg(text) {
     const group = at(r, "group"), team = at(r, "team");
     if (!group || !team) continue;
     const parent = at(r, "parent"), lead = at(r, "lead"), pm = at(r, "pm");
+    if (hasCap) { const c = Number(at(r, "cap")); if (c >= 1) caps[team] = Math.round(c); }
     const g = getGroup(group);
     if (parent) {
       let mem = g._m[parent];
@@ -1383,7 +1395,7 @@ function csvToOrg(text) {
     count++;
   }
   const org = groups.map((g) => ({ name: g.name, members: g.members.map((m) => { const mm = { name: m.name, lead: m.lead || "" }; if (m.pm) mm.pm = m.pm; if (m.sub && m.sub.length) mm.sub = m.sub; return mm; }) }));
-  return { org, count, error: count ? "" : "No valid team rows found." };
+  return { org, capacities: hasCap ? caps : null, count, error: count ? "" : "No valid team rows found." };
 }
 function timelineToCsv(projects) {
   const cols = ["projectCode", "deliverable", "owner", "start", "weeks", "hours"];
@@ -1560,7 +1572,7 @@ function GanttGrid({ groups, org, onOpen, labelHeader = "Deliverable" }) {
           <div key={g.key}>
             {g.label && <div style={{ ...grid }}><div style={{ gridColumn: "1 / -1", position: "sticky", left: 0, background: T.paper, padding: "8px 8px 4px", fontFamily: T.display, fontWeight: 700, fontSize: 13, color: g.color || T.ink, borderTop: `1px solid ${T.hairline}` }}>{g.label}</div></div>}
             {g.tasks.map((t) => {
-              const ownerPath = t.owner ? resourcePathPM(org, t.owner) : "";
+              const own = t.owner ? resourceLines(org, t.owner) : { team: "", people: "" };
               const dt = delivType(t.stretch);
               return (
                 <div key={t.key} style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairlineSoft}` }}>
@@ -1569,9 +1581,10 @@ function GanttGrid({ groups, org, onOpen, labelHeader = "Deliverable" }) {
                       <span style={{ width: 8, height: 8, borderRadius: 3, background: dt.color, flexShrink: 0 }} />
                       <span style={{ fontSize: 12.5, fontWeight: 600, color: T.ink, lineHeight: 1.3 }}>{t.deliverable}</span>
                     </div>
-                    {ownerPath && <div style={{ fontSize: 11, color: t.ws.color, lineHeight: 1.3, marginLeft: 14 }}>{ownerPath}</div>}
+                    {own.team && <div style={{ fontSize: 11, color: t.ws.color, lineHeight: 1.3, marginLeft: 14 }}>{own.team}</div>}
+                    {own.people && <div style={{ fontSize: 11, color: t.ws.color, lineHeight: 1.3, marginLeft: 14 }}>{own.people}</div>}
                   </button>
-                  <div title={`${t.deliverable}${ownerPath ? " · " + ownerPath : ""} · ${weekDate(t.idx)} → ${weekDate(t.idx + t.weeks - 1)} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 20, background: t.ws.soft, border: `1px solid ${t.ws.color}`, borderLeft: `3px solid ${t.ws.color}`, borderRadius: 5, margin: "5px 2px" }} />
+                  <div title={`${t.deliverable}${own.team ? " · " + own.team : ""}${own.people ? " · " + own.people : ""} · ${weekDate(t.idx)} → ${weekDate(t.idx + t.weeks - 1)} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 20, background: t.ws.soft, border: `1px solid ${t.ws.color}`, borderLeft: `3px solid ${t.ws.color}`, borderRadius: 5, margin: "5px 2px" }} />
                 </div>
               );
             })}
@@ -1667,7 +1680,7 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
                     <button onClick={() => toggle(g.p.id)} title={`${g.p.code} · ${g.tasks.length} deliverables · ${weekLabel(g.gMin).q} W${weekLabel(g.gMin).wk} → ${weekLabel(g.gMax).q} W${weekLabel(g.gMax).wk}`} style={{ gridColumn: `${2 + (g.gMin - minIdx)} / span ${g.gMax - g.gMin + 1}`, gridRow: 1, alignSelf: "center", height: 24, background: g.ws.soft, border: `1px solid ${g.ws.color}`, borderLeft: `3px solid ${g.ws.color}`, borderRadius: 6, color: g.ws.color, fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "0 8px", textAlign: "left", overflow: "hidden", whiteSpace: "nowrap", cursor: "pointer", margin: "4px 2px" }}>{g.p.code}</button>
                   </div>
                   {isOpen && g.tasks.map((t) => {
-                    const ownerPath = t.owner ? resourcePathPM(org, t.owner) : "";
+                    const own = t.owner ? resourceLines(org, t.owner) : { team: "", people: "" };
                     const dt = delivType(t.stretch);
                     return (
                     <div key={t.key} style={{ ...grid, alignItems: "center", borderTop: `1px solid ${T.hairlineSoft}` }}>
@@ -1676,9 +1689,10 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
                           <span style={{ width: 8, height: 8, borderRadius: 3, background: dt.color, flexShrink: 0 }} />
                           <span style={{ fontSize: 12, fontWeight: 600, color: T.ink, lineHeight: 1.3 }}>{t.deliverable}</span>
                         </div>
-                        {ownerPath && <div style={{ fontSize: 10.5, color: g.ws.color, lineHeight: 1.3, marginLeft: 14 }}>{ownerPath}</div>}
+                        {own.team && <div style={{ fontSize: 10.5, color: g.ws.color, lineHeight: 1.3, marginLeft: 14 }}>{own.team}</div>}
+                        {own.people && <div style={{ fontSize: 10.5, color: g.ws.color, lineHeight: 1.3, marginLeft: 14 }}>{own.people}</div>}
                       </button>
-                      <div title={`${t.deliverable}${ownerPath ? " · " + ownerPath : ""} · ${weekDate(t.idx)} → ${weekDate(t.idx + t.weeks - 1)} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 16, background: g.ws.soft, border: `1px solid ${g.ws.color}`, borderLeft: `3px solid ${g.ws.color}`, borderRadius: 4, margin: "4px 2px" }} />
+                      <div title={`${t.deliverable}${own.team ? " · " + own.team : ""}${own.people ? " · " + own.people : ""} · ${weekDate(t.idx)} → ${weekDate(t.idx + t.weeks - 1)} (${t.weeks}w)`} style={{ gridColumn: `${2 + (t.idx - minIdx)} / span ${t.weeks}`, gridRow: 1, alignSelf: "center", height: 16, background: g.ws.soft, border: `1px solid ${g.ws.color}`, borderLeft: `3px solid ${g.ws.color}`, borderRadius: 4, margin: "4px 2px" }} />
                     </div>
                     );
                   })}
@@ -1744,7 +1758,7 @@ function RosterImportModal({ onClose, onApply }) {
     if (!parsed.org || !parsed.count) { setErr(parsed.error || "Nothing to import."); return; }
     if (!window.confirm(`Replace the entire roster with ${parsed.org.length} group(s) / ${teams} team(s)? This overwrites the current roster.`)) return;
     setBusy(true); setErr("");
-    try { await onApply(parsed.org); onClose(); } catch (e) { setErr(e.message); setBusy(false); }
+    try { await onApply(parsed.org, parsed.capacities); onClose(); } catch (e) { setErr(e.message); setBusy(false); }
   };
   const field = { fontFamily: T.body, fontSize: 13, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, width: "100%" };
   const lbl = { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft, marginBottom: 5, display: "block" };
@@ -1752,11 +1766,11 @@ function RosterImportModal({ onClose, onApply }) {
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, width: "min(640px, 100%)", maxHeight: "88vh", overflowY: "auto", padding: 26, fontFamily: T.body }}>
         <h2 style={{ ...h2Style, marginTop: 0 }}>Import roster</h2>
-        <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "6px 0 14px" }}>Paste or upload a roster CSV — same columns as <strong>Export roster</strong>: <code style={codeChip}>group, team, parent, lead, pm</code>. One row per team. Leave <code style={codeChip}>parent</code> blank for a top-level team; set it to a team's name to nest a sub-team under it. This <strong>replaces the entire roster</strong>.</p>
+        <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "6px 0 14px" }}>Paste or upload a roster CSV — same columns as <strong>Export roster</strong>: <code style={codeChip}>group, team, parent, lead, pm, cap</code>. One row per team. Leave <code style={codeChip}>parent</code> blank for a top-level team; set it to a team's name to nest a sub-team under it. <code style={codeChip}>cap</code> is that team's capacity hours/quarter (optional — omit the column to keep current caps). This <strong>replaces the entire roster</strong>.</p>
         <label style={lbl}>UPLOAD .CSV</label>
         <input type="file" accept=".csv,text/csv" onChange={onFile} style={{ fontSize: 12.5, marginBottom: 10 }} />
         <label style={lbl}>OR PASTE CSV</label>
-        <textarea value={text} onChange={(e) => { setText(e.target.value); setErr(""); }} rows={8} placeholder={"group,team,parent,lead,pm\nOperations,Finance,,Chrissy Lo,Robin Soukup\nB2B Marketing,B2B Marketing,,Brandi Eppolito,Megan Taggart\nB2B Marketing,Events,B2B Marketing,Rachel Weinstein,"} style={{ ...field, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, resize: "vertical" }} />
+        <textarea value={text} onChange={(e) => { setText(e.target.value); setErr(""); }} rows={8} placeholder={"group,team,parent,lead,pm,cap\nOperations,Finance,,Chrissy Lo,Robin Soukup,240\nContractors,HubSpot,,Empty Cup Digital,,240"} style={{ ...field, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, resize: "vertical" }} />
         <div style={{ fontSize: 12.5, color: parsed.error ? "#A33D3D" : T.inkSoft, margin: "8px 0 0" }}>{text.trim() ? (parsed.error || `${parsed.org.length} group${parsed.org.length === 1 ? "" : "s"}, ${teams} team${teams === 1 ? "" : "s"} ready: ${parsed.org.map((g) => g.name).join(", ")}`) : "Waiting for CSV…"}</div>
         {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "8px 0 0" }}>{err}</p>}
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
