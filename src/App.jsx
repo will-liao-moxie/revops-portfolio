@@ -452,7 +452,7 @@ export default function App() {
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
       `}</style>
 
-      <header style={{ padding: "26px 14px 0", maxWidth: 1180, margin: "0 auto" }}>
+      <header style={{ padding: "26px 14px 0", maxWidth: 1400, margin: "0 auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
           <div>
             <Eyebrow>MOXIE · REVOPS · {projects.length} PROJECTS</Eyebrow>
@@ -484,7 +484,7 @@ export default function App() {
         </div>
       </header>
 
-      <main style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 14px 60px" }}>
+      <main style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 14px 60px" }}>
         {needsRestore && (
           <div style={{ background: "#FFF8EC", border: "1px solid #E9D08A", borderRadius: 12, padding: "14px 18px", marginBottom: 18, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 240 }}>
@@ -648,7 +648,7 @@ function Sequence({ projects, byId, onOpen }) {
   projects.forEach((p) => cell[g.keyOf(p)][p.targetWindow || "TBD"].push(p));
   const laneOfProj = {}; projects.forEach((p) => { laneOfProj[p.id] = g.keyOf(p); });
 
-  const NODE_W = 170, NODE_H = 90, V_GAP = 12, COL_GAP = 104, TOP = 50, GUTTER = 120, PADY = 14;
+  const NODE_W = 164, NODE_H = 90, V_GAP = 12, COL_GAP = 86, TOP = 50, GUTTER = 112, PADY = 14;
   const colX = (i) => GUTTER + i * (NODE_W + COL_GAP);
   // Assign each project a vertical "track" within its lane. A project inherits the track of its
   // same-lane prerequisite (processed left-to-right by quarter) when that track is free, so chained
@@ -714,13 +714,14 @@ function Sequence({ projects, byId, onOpen }) {
                 {li % 2 === 1 && <rect x={0} y={laneY[w]} width={width} height={laneH[w]} fill={T.paper} />}
                 <rect x={0} y={laneY[w]} width={4} height={laneH[w]} fill={lc} />
                 <line x1={0} y1={laneY[w]} x2={width} y2={laneY[w]} stroke={T.hairline} />
-                <foreignObject x={8} y={laneY[w]} width={GUTTER - 16} height={laneH[w]}>
+                <foreignObject x={8} y={laneY[w]} width={GUTTER - 24} height={laneH[w]}>
                   <div xmlns="http://www.w3.org/1999/xhtml" style={{ height: "100%", display: "flex", alignItems: "center", fontFamily: T.body, fontWeight: 700, fontSize: 11.5, lineHeight: 1.18, color: lc, wordBreak: "break-word" }}>{g.name(w)}</div>
                 </foreignObject>
               </g>
             );
           })}
           {/* quarter column guides + headers (count + total impact + total effort) */}
+          <line x1={GUTTER - 8} y1={TOP} x2={GUTTER - 8} y2={height} stroke={T.hairline} />
           {quarters.map((q, i) => i === 0 ? null : <line key={"g" + q} x1={colX(i) - COL_GAP / 2} y1={TOP} x2={colX(i) - COL_GAP / 2} y2={height} stroke={T.hairlineSoft} />)}
           {quarters.map((q, i) => (
             <g key={q}>
