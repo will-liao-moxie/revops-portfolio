@@ -635,10 +635,13 @@ function Sequence({ projects, byId, onOpen }) {
   const [groupBy, setGroupBy] = useState("workstream");
   if (!projects.length) return <Empty />;
   const g = SEQ_GROUPS[groupBy];
-  const quarters = Array.from(new Set(projects.map((p) => p.targetWindow || "TBD"))).sort((a, b) => targetRank(a) - targetRank(b));
+  // columns cover every quarter any project touches (start → end span), so cross-quarter projects render fully
+  const quarters = Array.from(new Set(projects.flatMap((p) => projectQuarters(p)))).sort((a, b) => targetRank(a) - targetRank(b));
   const qIndex = Object.fromEntries(quarters.map((q, i) => [q, i]));
+  const startCol = (p) => qIndex[p.targetWindow || "TBD"] ?? 0;
+  const endCol = (p) => { const s = startCol(p); const e = p.endWindow != null && qIndex[p.endWindow] != null ? qIndex[p.endWindow] : s; return Math.max(s, e); };
   const qCount = {}, qImpact = {}, qEffort = {};
-  projects.forEach((p) => { const q = p.targetWindow || "TBD"; qCount[q] = (qCount[q] || 0) + 1; qImpact[q] = (qImpact[q] || 0) + (Number(p.impact) || 0); qEffort[q] = (qEffort[q] || 0) + (EFFORT_POINTS[p.effort] || EFFORT_POINTS.M); });
+  projects.forEach((p) => projectQuarters(p).forEach((q) => { qCount[q] = (qCount[q] || 0) + 1; qImpact[q] = (qImpact[q] || 0) + (Number(p.impact) || 0); qEffort[q] = (qEffort[q] || 0) + (EFFORT_POINTS[p.effort] || EFFORT_POINTS.M); }));
   const laneKeys = []; projects.forEach((p) => { const k = g.keyOf(p); if (!laneKeys.includes(k)) laneKeys.push(k); });
   const lanes = g.order(laneKeys);
   const cell = {}; lanes.forEach((w) => { cell[w] = {}; quarters.forEach((q) => { cell[w][q] = []; }); });
@@ -668,9 +671,13 @@ function Sequence({ projects, byId, onOpen }) {
         return effPts(b.p) - effPts(a.p);
       });
       cps.forEach(({ p, pref }) => {
+        // reserve a track free across EVERY column the project spans (start → end), so spanning bars never overlap
+        const e = endCol(p);
+        const freeAcross = (t) => { for (let c = ci; c <= e; c++) { if ((usedByCol[c] = usedByCol[c] || new Set()).has(t)) return false; } return true; };
         let track = pref != null ? pref : 0;
-        while (used.has(track)) track++;
-        used.add(track); trackOf[p.id] = track; if (track > maxTrack) maxTrack = track;
+        while (!freeAcross(track)) track++;
+        for (let c = ci; c <= e; c++) (usedByCol[c] = usedByCol[c] || new Set()).add(track);
+        trackOf[p.id] = track; if (track > maxTrack) maxTrack = track;
       });
     });
     laneTracks[w] = maxTrack + 1;
@@ -678,7 +685,7 @@ function Sequence({ projects, byId, onOpen }) {
   const laneY = {}, laneH = {}; let acc = TOP;
   lanes.forEach((w) => { laneY[w] = acc; laneH[w] = PADY + laneTracks[w] * (NODE_H + V_GAP); acc += laneH[w]; });
   const pos = {};
-  lanes.forEach((w) => quarters.forEach((q) => cell[w][q].forEach((p) => { pos[p.id] = { x: colX(qIndex[q]), y: laneY[w] + PADY / 2 + trackOf[p.id] * (NODE_H + V_GAP) }; })));
+  lanes.forEach((w) => quarters.forEach((q) => cell[w][q].forEach((p) => { const s = qIndex[q], e = endCol(p); pos[p.id] = { x: colX(s), y: laneY[w] + PADY / 2 + trackOf[p.id] * (NODE_H + V_GAP), w: colX(e) + NODE_W - colX(s), span: e > s }; })));
   const width = colX(quarters.length - 1) + NODE_W + 16;
   const height = acc + 6;
   const edges = [];
@@ -723,20 +730,21 @@ function Sequence({ projects, byId, onOpen }) {
           ))}
           {/* dependency arrows */}
           {showDeps && edges.map(([from, to], i) => {
-            const a = pos[from], b = pos[to]; const sameX = Math.abs(a.x - b.x) < 1;
-            const sx = a.x + (b.x >= a.x ? NODE_W : 0), sy = a.y + NODE_H / 2;
-            const ex = b.x + (b.x >= a.x ? 0 : NODE_W), ey = b.y + NODE_H / 2; const mx = (sx + ex) / 2;
-            // same quarter (same column): exit the prerequisite's RIGHT edge and curve back into the dependent's LEFT edge
-            const d = sameX ? `M ${a.x + NODE_W} ${sy} C ${a.x + NODE_W + 44} ${sy}, ${b.x - 44} ${ey}, ${b.x} ${ey}` : `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
+            const a = pos[from], b = pos[to]; const aw = a.w || NODE_W, bw = b.w || NODE_W; const sameX = Math.abs(a.x - b.x) < 1;
+            const sx = a.x + (b.x >= a.x ? aw : 0), sy = a.y + NODE_H / 2;
+            const ex = b.x + (b.x >= a.x ? 0 : bw), ey = b.y + NODE_H / 2; const mx = (sx + ex) / 2;
+            // same start column: exit the prerequisite's RIGHT edge and curve back into the dependent's LEFT edge
+            const d = sameX ? `M ${a.x + aw} ${sy} C ${a.x + aw + 44} ${sy}, ${b.x - 44} ${ey}, ${b.x} ${ey}` : `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
             return <path key={i} d={d} fill="none" stroke="#A33D3D" strokeWidth="1.6" opacity="0.65" markerEnd="url(#seqArrow)" />;
           })}
           {/* project nodes — HTML so long titles wrap instead of truncating; effort + impact color-coded like the board */}
           {projects.map((p) => {
             const ws = wsMeta(p.workstream); const pp = pos[p.id]; if (!pp) return null; const { x: nx, y: ny } = pp;
+            const spanLabel = pp.span ? `${p.targetWindow} → ${p.endWindow}` : "";
             return (
-              <foreignObject key={p.id} x={nx} y={ny} width={NODE_W} height={NODE_H} onClick={() => onOpen(p.id)} style={{ cursor: "pointer", overflow: "visible" }}>
-                <div xmlns="http://www.w3.org/1999/xhtml" style={{ height: "100%", boxSizing: "border-box", background: T.surface, border: `1px solid ${T.hairline}`, borderLeft: `4px solid ${ws.color}`, borderRadius: 10, padding: "7px 10px", overflow: "hidden", fontFamily: T.body, display: "flex", flexDirection: "column", gap: 3 }}>
-                  <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 600, color: ws.color, letterSpacing: "0.06em" }}>{p.code}</div>
+              <foreignObject key={p.id} x={nx} y={ny} width={pp.w} height={NODE_H} onClick={() => onOpen(p.id)} style={{ cursor: "pointer", overflow: "visible" }}>
+                <div xmlns="http://www.w3.org/1999/xhtml" title={spanLabel} style={{ height: "100%", boxSizing: "border-box", background: T.surface, border: `1px solid ${T.hairline}`, borderLeft: `4px solid ${ws.color}`, borderRadius: 10, padding: "7px 10px", overflow: "hidden", fontFamily: T.body, display: "flex", flexDirection: "column", gap: 3 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 6 }}><span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 600, color: ws.color, letterSpacing: "0.06em" }}>{p.code}</span>{spanLabel && <span style={{ fontFamily: T.mono, fontSize: 9, color: T.inkSoft }}>{spanLabel}</span>}</div>
                   <div title={p.title} style={{ flex: 1, fontSize: 11.5, fontWeight: 600, color: T.ink, lineHeight: 1.22, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.title}</div>
                   <div style={{ display: "flex", gap: 5 }}><EffortChip effort={p.effort} /><ImpactChip impact={p.impact} /></div>
                 </div>
