@@ -105,7 +105,7 @@ function capHeatStyle(v, cap) {
   const c = r > 1 ? { bg: "#C13434", fg: "#fff" } : r > 0.75 ? { bg: "#E0A21A", fg: "#3A2C05" } : { bg: "#2E8B57", fg: "#fff" };
   return { background: c.bg, color: c.fg };
 }
-const TARGETS = ["TBD", "Q3 2026", "Q4 2026", "Q1 2027", "Q2 2027", "Q3 2027", "Q4 2027"];
+const TARGETS = ["TBD", "Q2 2026", "Q3 2026", "Q4 2026", "Q1 2027", "Q2 2027", "Q3 2027", "Q4 2027"];
 const QUARTERS = TARGETS.filter((t) => t !== "TBD");
 function targetRank(t) {
   if (!t || t.toUpperCase() === "TBD") return 999999;
