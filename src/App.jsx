@@ -198,11 +198,23 @@ function normDel(s) { return (s || "").toLowerCase().trim().replace(/\s+/g, " ")
 function resourceNames(resource) { return new Set([normName(resource.label), normName(resource.lead)].filter(Boolean)); }
 function matchesResource(resource, who) { return resourceNames(resource).has(normName(who)); }
 function roleEffort(r) { return EFFORT_HOURS[r && r.effort] || EFFORT_HOURS.M; }
+// A project runs from its start quarter (targetWindow) through its end quarter (endWindow, if set);
+// returns every quarter it spans, inclusive. Single-quarter when no end (or end ≤ start).
+function projectQuarters(p) {
+  const start = p.targetWindow || "TBD";
+  const end = p.endWindow || start;
+  if (start === "TBD") return ["TBD"];
+  const sr = targetRank(start), er = targetRank(end);
+  if (er <= sr) return [start];
+  const span = QUARTERS.filter((q) => { const r = targetRank(q); return r >= sr && r <= er; });
+  return span.length ? span : [start];
+}
 // Resourcing is driven solely by the Team & resourcing roles — each named team's effort, counted
-// in the project's target quarter. The timeline/schedule is only for visualizing weeks, NOT for
-// resourcing load (a team with several scheduled deliverables shouldn't be multi-counted).
+// in the project's target quarter(s). A multi-quarter project splits each team's hours EVENLY
+// across the quarters it spans. The timeline/schedule is only for visualizing weeks.
 function projectAssignments(p) {
-  return (p.roles || []).map((r) => ({ owner: r.who || "", pts: roleEffort(r), quarter: p.targetWindow || "TBD" }));
+  const qs = projectQuarters(p); const n = qs.length || 1;
+  return (p.roles || []).flatMap((r) => { const per = roleEffort(r) / n; return qs.map((q) => ({ owner: r.who || "", pts: per, quarter: q })); });
 }
 function resourceProjects(resource, projects) { return projects.filter((p) => projectAssignments(p).some((a) => matchesResource(resource, a.owner))); }
 function resourceUnitsOn(resource, p) { return projectAssignments(p).filter((a) => matchesResource(resource, a.owner)).reduce((s, a) => s + a.pts, 0); }
@@ -896,10 +908,10 @@ function ResourceGroup({ group, rows, mode, colorMode, cellMax, projects, qStart
             <td style={{ ...FROZEN.team, background: T.surface, padding: "9px 14px", fontSize: 13, width: TEAM_W }}><div style={{ fontWeight: 600, lineHeight: 1.25 }}>{r.parent ? `${r.parent} · ${r.label}` : r.label}</div>{(r.lead || r.pm) && <div style={{ fontSize: 11, color: T.inkSoft, lineHeight: 1.25, marginTop: 1 }}>{[r.lead, r.pm ? `PM ${r.pm}` : ""].filter(Boolean).join(" · ")}</div>}</td>
             {!compare && <td style={{ ...FROZEN.cap, background: T.surface, textAlign: "center", padding: "0 8px" }}>{unlocked ? <CapInput value={cap} onCommit={(n) => onSetCapacity(r.label, n)} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkSoft }}>{cap}</span>}</td>}
             {mode === "project"
-              ? projects.map((p) => { const v = r.unitsBy[p.id]; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px", borderLeft: qStartIds && qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}>{v != null ? <span title={`${p.code} · ${p.targetWindow || "TBD"} · ${v}h`} style={{ ...chip, ...cellStyle(v) }}>{v}</span> : null}</td>; })
+              ? projects.map((p) => { const v = r.unitsBy[p.id]; return <td key={p.id} style={{ textAlign: "center", padding: "9px 6px", borderLeft: qStartIds && qStartIds.has(p.id) ? `2px solid ${T.hairline}` : undefined }}>{v != null ? <span title={`${p.code} · ${p.targetWindow || "TBD"} · ${Math.round(v)}h`} style={{ ...chip, ...cellStyle(v) }}>{Math.round(v)}</span> : null}</td>; })
               : mode === "category"
-                ? catQCols.map((col) => { const v = r.unitsByCatQ[col.key] || 0; return <td key={col.key} style={{ textAlign: "center", padding: "9px 6px", borderLeft: catQStart.has(col.key) ? `2px solid ${T.hairline}` : undefined }}>{v ? <span title={`${col.cat} · ${col.q} · ${v}h`} style={{ ...chip, ...cellStyle(v) }}>{v}</span> : null}</td>; })
-                : quarters.map((q) => { const v = r.unitsByQ[q] || 0; const oc = capColored && v > cap; return <td key={q} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={compare ? `${q} · ${v}h` : `${q} · ${v}/${cap}h`} style={{ ...chip, ...cellStyle(v) }}>{v}{oc ? " ⚠" : ""}</span> : null}</td>; })}
+                ? catQCols.map((col) => { const v = r.unitsByCatQ[col.key] || 0; return <td key={col.key} style={{ textAlign: "center", padding: "9px 6px", borderLeft: catQStart.has(col.key) ? `2px solid ${T.hairline}` : undefined }}>{v ? <span title={`${col.cat} · ${col.q} · ${Math.round(v)}h`} style={{ ...chip, ...cellStyle(v) }}>{Math.round(v)}</span> : null}</td>; })
+                : quarters.map((q) => { const v = r.unitsByQ[q] || 0; const oc = capColored && v > cap; return <td key={q} style={{ textAlign: "center", padding: "9px 6px" }}>{v ? <span title={compare ? `${q} · ${Math.round(v)}h` : `${q} · ${Math.round(v)}/${cap}h`} style={{ ...chip, ...cellStyle(v) }}>{Math.round(v)}{oc ? " ⚠" : ""}</span> : null}</td>; })}
           </tr>
         );
       })}
@@ -1000,7 +1012,8 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
   const committed = (draft.deliverables || []).filter((d) => !d.stretch);
   const stretch = (draft.deliverables || []).filter((d) => d.stretch);
   const depOptions = Object.values(byId).filter((x) => x.id !== p.id);
-  const targetOpts = Array.from(new Set([draft.targetWindow || "TBD", ...TARGETS]));
+  const targetOpts = Array.from(new Set([draft.targetWindow || "TBD", draft.endWindow, ...TARGETS].filter(Boolean)));
+  const endVal = draft.endWindow || draft.targetWindow || "TBD";
   const [ganttMsg, setGanttMsg] = useState("");
   const [showImport, setShowImport] = useState(false);
   const ganttTasks = projectTasks(draft);
@@ -1040,7 +1053,8 @@ function Detail({ p, byId, org, unlocked, workstreams, onClose, onUpdate, onRemo
           <div style={{ display: "flex", flexWrap: "wrap", gap: 0, marginTop: 16, border: `1px solid ${T.hairline}`, borderRadius: 10, overflow: "hidden" }}>
             <Stat label="Impact">{unlocked ? <MiniSelect value={draft.impact} options={[1, 2, 3, 4, 5]} onChange={(v) => up({ impact: Number(v) })} /> : <ScoreDots value={draft.impact} color={ws.color} />}</Stat>
             <Stat label="Effort">{unlocked ? <MiniSelect value={draft.effort || "M"} options={EFFORTS} onChange={(v) => up({ effort: v })} /> : <EffortChip effort={draft.effort} ws={ws} />}</Stat>
-            <Stat label="Target">{unlocked ? <MiniSelect value={draft.targetWindow || "TBD"} options={targetOpts} onChange={(v) => up({ targetWindow: v })} /> : <span style={{ fontSize: 13, fontWeight: 600 }}>{draft.targetWindow || "TBD"}</span>}</Stat>
+            <Stat label="Start">{unlocked ? <MiniSelect value={draft.targetWindow || "TBD"} options={targetOpts} onChange={(v) => up({ targetWindow: v })} /> : <span style={{ fontSize: 13, fontWeight: 600 }}>{draft.targetWindow || "TBD"}</span>}</Stat>
+            <Stat label="End">{unlocked ? <MiniSelect value={endVal} options={targetOpts} onChange={(v) => up({ endWindow: v === (draft.targetWindow || "TBD") ? undefined : v })} /> : <span style={{ fontSize: 13, fontWeight: 600 }}>{endVal}</span>}</Stat>
           </div>
         </div>
 
@@ -1298,9 +1312,9 @@ function MiniSelect({ value, options, onChange }) {
 }
 
 /* ---------- CSV import ---------- */
-const CSV_COLUMNS = ["title", "workstream", "effort", "impact", "target", "dri", "stakeholder", "problem", "solution", "success", "deliverables", "team", "dependsOn", "openItems"];
-const CSV_TEMPLATE = `title,workstream,effort,impact,target,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
-"Example Project","Supplies",L,4,"Q4 2026","Shannon Aubert","Supplies team","The pain and what it costs today.","The approach in plain language.","Measurable outcome and who owns it.","Build the thing | Wire up the sync | *Nice-to-have stretch","Business Systems :: Architects and builds :: L | HubSpot :: HubSpot build :: M | Data :: Pipelines :: S","SUP-01 :: extends its foundation","Vendor API feasibility unvalidated"`;
+const CSV_COLUMNS = ["title", "workstream", "effort", "impact", "target", "targetEnd", "dri", "stakeholder", "problem", "solution", "success", "deliverables", "team", "dependsOn", "openItems"];
+const CSV_TEMPLATE = `title,workstream,effort,impact,target,targetEnd,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
+"Example Project","Supplies",L,4,"Q4 2026","Q1 2027","Shannon Aubert","Supplies team","The pain and what it costs today.","The approach in plain language.","Measurable outcome and who owns it.","Build the thing | Wire up the sync | *Nice-to-have stretch","Business Systems :: Architects and builds :: L | HubSpot :: HubSpot build :: M | Data :: Pipelines :: S","SUP-01 :: extends its foundation","Vendor API feasibility unvalidated"`;
 
 function parseCSV(text) {
   const rows = []; let row = [], cur = "", q = false;
@@ -1318,7 +1332,7 @@ function parseCSV(text) {
 }
 
 /* logical project field -> CSV header column name */
-const FIELD_COL = { title: "title", workstream: "workstream", dri: "dri", targetWindow: "target", stakeholder: "stakeholder", problem: "problem", solution: "solution", success: "success", deliverables: "deliverables", roles: "team", dependsOn: "dependson", openItems: "openitems", impact: "impact", effort: "effort" };
+const FIELD_COL = { title: "title", workstream: "workstream", dri: "dri", targetWindow: "target", endWindow: "targetend", stakeholder: "stakeholder", problem: "problem", solution: "solution", success: "success", deliverables: "deliverables", roles: "team", dependsOn: "dependson", openItems: "openitems", impact: "impact", effort: "effort" };
 
 // Parse a projects CSV. When upsert is true, rows whose `code` (or `id`) matches an existing
 // project become UPDATES (keeping that project's id/code; only the columns present in the CSV
@@ -1363,7 +1377,7 @@ function csvToProjects(text, existing, upsert = false) {
     const effort = (at(r, "effort") || "M").toUpperCase();
     return {
       title: at(r, "title"), workstream: ws,
-      dri: at(r, "dri"), targetWindow: at(r, "target") || "TBD", stakeholder: at(r, "stakeholder"),
+      dri: at(r, "dri"), targetWindow: at(r, "target") || "TBD", endWindow: at(r, "targetend") || "", stakeholder: at(r, "stakeholder"),
       problem: at(r, "problem"), solution: at(r, "solution"), success: at(r, "success"),
       deliverables: items(at(r, "deliverables")).map((t) => t.startsWith("*") ? { text: t.slice(1).trim(), stretch: true } : { text: t, stretch: false }),
       roles: items(at(r, "team")).map((e) => { const a = e.split("::").map((x) => x.trim()); const eff = (a[2] || "").toUpperCase(); return { who: a[0] || "", what: a[1] || "", effort: EFFORTS.includes(eff) ? eff : "M" }; }).filter((x) => x.who),
@@ -1397,7 +1411,7 @@ function projectsToCsv(projects) {
   projects.forEach((p) => {
     const cell = {
       code: p.code || "", title: p.title || "", workstream: p.workstream || "", effort: p.effort || "M",
-      impact: p.impact ?? "", target: p.targetWindow || "", dri: p.dri || "", stakeholder: p.stakeholder || "",
+      impact: p.impact ?? "", target: p.targetWindow || "", targetEnd: p.endWindow || "", dri: p.dri || "", stakeholder: p.stakeholder || "",
       problem: p.problem || "", solution: p.solution || "", success: p.success || "",
       deliverables: (p.deliverables || []).map((d) => (d.stretch ? "*" : "") + d.text).join(" | "),
       team: (p.roles || []).map((r) => `${r.who} :: ${r.what} :: ${r.effort || "M"}`).join(" | "),
@@ -1852,7 +1866,7 @@ function RosterImportModal({ onClose, onApply }) {
 /* ---------- ADD MODAL ---------- */
 function AddModal({ onClose, onAdd, onImport, existing, workstreams }) {
   const [mode, setMode] = useState("single");
-  const [f, setF] = useState({ title: "", workstream: "Marketing Services", effort: "M", impact: 3, targetWindow: "Q3 2026", dri: "", problem: "", solution: "" });
+  const [f, setF] = useState({ title: "", workstream: "Marketing Services", effort: "M", impact: 3, targetWindow: "Q3 2026", endWindow: "Q3 2026", dri: "", problem: "", solution: "" });
   const [csv, setCsv] = useState("");
   const [upsert, setUpsert] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -1868,7 +1882,7 @@ function AddModal({ onClose, onAdd, onImport, existing, workstreams }) {
     let id = base, n = 2; while (existing.some((p) => p.id === id)) { id = `${base}-${n++}`; }
     const obj = {
       id, code: nextCode(f.workstream.trim(), existing, id), title: f.title.trim(), workstream: f.workstream.trim(),
-      stakeholder: "", dri: f.dri, targetWindow: f.targetWindow, problem: f.problem, solution: f.solution, success: "",
+      stakeholder: "", dri: f.dri, targetWindow: f.targetWindow, endWindow: f.endWindow && f.endWindow !== f.targetWindow ? f.endWindow : "", problem: f.problem, solution: f.solution, success: "",
       deliverables: [], roles: [], dependsOn: [], openItems: [], impact: Number(f.impact), effort: f.effort,
     };
     onAdd(obj).then(() => onClose()).catch((e) => setErr(e.message));
@@ -1896,13 +1910,14 @@ function AddModal({ onClose, onAdd, onImport, existing, workstreams }) {
             <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "0 0 16px" }}>Fill the essentials — deliverables, team, dependencies, and risks are editable inline on the project once it opens. The project code comes from the workstream.</p>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div><label style={lbl}>TITLE</label><input value={f.title} onChange={(e) => { set("title", e.target.value); setErr(""); }} placeholder="Project title" style={field} /></div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr", gap: 12 }}>
                 <div><label style={lbl}>WORKSTREAM</label>
                   <select value={f.workstream} onChange={(e) => { if (e.target.value === "__new__") { const v = window.prompt("New workstream name:"); if (v && v.trim()) set("workstream", v.trim()); } else set("workstream", e.target.value); }} style={field}>
                     {wsAll.map((w) => <option key={w} value={w}>{w}</option>)}<option value="__new__">+ New workstream…</option>
                   </select>
                 </div>
-                <div><label style={lbl}>TARGET</label><select value={f.targetWindow} onChange={(e) => set("targetWindow", e.target.value)} style={field}>{TARGETS.map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
+                <div><label style={lbl}>START</label><select value={f.targetWindow} onChange={(e) => set("targetWindow", e.target.value)} style={field}>{TARGETS.map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
+                <div><label style={lbl}>END</label><select value={f.endWindow} onChange={(e) => set("endWindow", e.target.value)} style={field}>{TARGETS.map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div><label style={lbl}>EFFORT</label><select value={f.effort} onChange={(e) => set("effort", e.target.value)} style={field}>{EFFORTS.map((s) => <option key={s} value={s}>{s} · {EFFORT_POINTS[s]}u</option>)}</select></div>
@@ -1921,7 +1936,7 @@ function AddModal({ onClose, onAdd, onImport, existing, workstreams }) {
             <div style={{ background: T.paper, border: `1px solid ${T.hairline}`, borderRadius: 10, padding: "12px 14px", marginBottom: 14, fontSize: 12.5, lineHeight: 1.6, color: T.inkSoft }}>
               <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: "0.08em", color: T.ink, marginBottom: 6 }}>CSV FORMAT</div>
               <div>One row per project. Header columns (any order; extras ignored): <span style={{ fontFamily: T.mono, color: T.ink }}>{CSV_COLUMNS.join(", ")}</span>.</div>
-              <div style={{ marginTop: 6 }}>Only <strong>title</strong> is required for new projects. <strong>effort</strong> ∈ XS/S/M/L/XL; <strong>impact</strong> 1–5; <strong>workstream</strong> is free text (new ones fine). The project code is derived from the workstream.</div>
+              <div style={{ marginTop: 6 }}>Only <strong>title</strong> is required for new projects. <strong>effort</strong> ∈ XS/S/M/L/XL; <strong>impact</strong> 1–5; <strong>workstream</strong> is free text (new ones fine). The project code is derived from the workstream. <strong>target</strong> is the start quarter; add <strong>targetEnd</strong> for a multi-quarter span — resourcing then splits each team's hours evenly across those quarters.</div>
               <div style={{ marginTop: 6 }}><strong>Updating:</strong> with the toggle on, any row whose <code style={codeChip}>code</code> matches an existing project updates it in place (no duplicate) — and only the columns you include are changed, so a partial CSV (e.g. just <code style={codeChip}>code,target</code>) leaves everything else intact.</div>
               <div style={{ marginTop: 6 }}>List cells separate items with <code style={codeChip}>|</code> and sub-fields with <code style={codeChip}>::</code> —</div>
               <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>

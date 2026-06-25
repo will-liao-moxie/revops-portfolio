@@ -142,13 +142,16 @@ Nothing else in the code block — the user pastes it straight into **CSV upload
 
 ### Columns
 ```
-title,workstream,effort,impact,target,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
+title,workstream,effort,impact,target,targetEnd,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
 ```
+`target` is the start quarter. `targetEnd` is optional — set it for a project that spans multiple
+quarters (start → end inclusive); leave it blank for a single-quarter project. When a project spans
+multiple quarters, **Resourcing splits each team's hours evenly across those quarters.**
 
 ### Worked example
 ```csv
-title,workstream,effort,impact,target,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
-"Provider Onboarding Status Portal","Supplies",M,4,"Q4 2026","Shannon Aubert","Supplies team","Providers and PSMs can't see where onboarding stands, so they ping the Supplies team constantly and pull OAs off setup work. It doesn't scale as provider volume grows.","Surface onboarding milestones in a self-serve view backed by the ClickUp lifecycle, with Intercom notifications at each step.","Providers and PSMs self-serve onboarding status; inbound status pings to the Supplies team drop noticeably.","Self-serve status view | Milestone notifications via Intercom | *Predictive ETA per stage","Business Systems :: Architects and builds the view :: L | Supplies :: Defines milestones and copy :: S | HubSpot :: HubSpot wiring :: M | ClickUp :: Lifecycle workflow :: M","SUP-01 :: extends its ClickUp + Intercom foundation","Milestone definitions not finalized"
+title,workstream,effort,impact,target,targetEnd,dri,stakeholder,problem,solution,success,deliverables,team,dependsOn,openItems
+"Provider Onboarding Status Portal","Supplies",M,4,"Q4 2026","Q1 2027","Shannon Aubert","Supplies team","Providers and PSMs can't see where onboarding stands, so they ping the Supplies team constantly and pull OAs off setup work. It doesn't scale as provider volume grows.","Surface onboarding milestones in a self-serve view backed by the ClickUp lifecycle, with Intercom notifications at each step.","Providers and PSMs self-serve onboarding status; inbound status pings to the Supplies team drop noticeably.","Self-serve status view | Milestone notifications via Intercom | *Predictive ETA per stage","Business Systems :: Architects and builds the view :: L | Supplies :: Defines milestones and copy :: S | HubSpot :: HubSpot wiring :: M | ClickUp :: Lifecycle workflow :: M","SUP-01 :: extends its ClickUp + Intercom foundation","Milestone definitions not finalized"
 ```
 
 ---
