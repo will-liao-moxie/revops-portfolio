@@ -209,6 +209,13 @@ function projectQuarters(p) {
   const span = QUARTERS.filter((q) => { const r = targetRank(q); return r >= sr && r <= er; });
   return span.length ? span : [start];
 }
+// "Q3 2026" or "Q3 2026 → Q4 2026" (only shows the arrow when an end quarter is set and later than the start)
+function targetLabel(p) {
+  const start = p.targetWindow;
+  if (!start || start === "TBD") return "";
+  const end = p.endWindow;
+  return end && targetRank(end) > targetRank(start) ? `${start} → ${end}` : start;
+}
 // Resourcing is driven solely by the Team & resourcing roles — each named team's effort, counted
 // in the project's target quarter(s). A multi-quarter project splits each team's hours EVENLY
 // across the quarters it spans. The timeline/schedule is only for visualizing weeks.
@@ -312,6 +319,7 @@ export default function App() {
   const [loadError, setLoadError] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const [wsFilter, setWsFilter] = useState("All");
+  const [qFilter, setQFilter] = useState("All");
   const [showAdd, setShowAdd] = useState(false);
   const [needsRestore, setNeedsRestore] = useState(false);
   const [unlocked, setUnlocked] = useState(() => getEditKey() === EDIT_PW);
@@ -388,7 +396,17 @@ export default function App() {
 
   const byId = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p])), [projects]);
   const allWorkstreams = useMemo(() => Array.from(new Set([...Object.keys(WS).filter((w) => w !== "Other"), ...projects.map((p) => p.workstream).filter(Boolean)])), [projects]);
-  const visible = (wsFilter === "All" ? projects : projects.filter((p) => p.workstream === wsFilter)).slice().sort(byCategoryThenNumber);
+  // a project matches a quarter filter when that quarter falls anywhere within its start→end span
+  const visible = projects
+    .filter((p) => wsFilter === "All" || p.workstream === wsFilter)
+    .filter((p) => qFilter === "All" || projectQuarters(p).includes(qFilter))
+    .slice().sort(byCategoryThenNumber);
+  // quarters that at least one project actually spans (plus TBD when present), for the filter chips
+  const targetQuarters = useMemo(() => {
+    const present = new Set();
+    projects.forEach((p) => projectQuarters(p).forEach((q) => present.add(q)));
+    return ["All", ...QUARTERS.filter((q) => present.has(q)), ...(present.has("TBD") ? ["TBD"] : [])];
+  }, [projects]);
   const selected = selectedId ? byId[selectedId] : null;
 
   const updateProject = async (id, patch) => {
@@ -482,6 +500,17 @@ export default function App() {
             </div>
           )}
         </div>
+
+        {["board", "matrix", "sequence"].includes(view) && targetQuarters.length > 1 && (
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
+            <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft, textTransform: "uppercase", marginRight: 2 }}>Quarter</span>
+            {targetQuarters.map((q) => {
+              const active = qFilter === q;
+              const count = projects.filter((p) => (wsFilter === "All" || p.workstream === wsFilter) && (q === "All" || projectQuarters(p).includes(q))).length;
+              return <button key={q} onClick={() => setQFilter(q)} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontFamily: T.body, fontSize: 12, fontWeight: 500, padding: "5px 11px", borderRadius: 999, border: `1px solid ${active ? T.ink : T.hairline}`, background: active ? T.ink : T.surface, color: active ? "#fff" : T.inkSoft }}>{q}<span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, padding: "0 5px", borderRadius: 999, background: active ? "rgba(255,255,255,.22)" : T.hairlineSoft, color: active ? "#fff" : T.inkSoft }}>{count}</span></button>;
+            })}
+          </div>
+        )}
       </header>
 
       <main style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 14px 60px" }}>
@@ -540,7 +569,7 @@ function Board({ projects, onOpen }) {
             <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5, color: T.inkSoft, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.problem}</p>
             <div style={{ display: "flex", gap: 18, marginTop: 2, alignItems: "center" }}>
               <span style={{ fontSize: 11, color: T.inkSoft }}>Impact&nbsp;&nbsp;<ScoreDots value={p.impact} color={ws.color} /></span>
-              {p.targetWindow && p.targetWindow !== "TBD" && <span style={{ fontSize: 11, color: T.inkSoft }}>Target&nbsp;&nbsp;<strong style={{ color: T.ink, fontFamily: T.mono, fontSize: 11 }}>{p.targetWindow}</strong></span>}
+              {targetLabel(p) && <span style={{ fontSize: 11, color: T.inkSoft }}>Target&nbsp;&nbsp;<strong style={{ color: T.ink, fontFamily: T.mono, fontSize: 11 }}>{targetLabel(p)}</strong></span>}
             </div>
           </button>
         );
@@ -1420,7 +1449,7 @@ function projectsToCsv(projects) {
   projects.forEach((p) => {
     const cell = {
       code: p.code || "", title: p.title || "", workstream: p.workstream || "", effort: p.effort || "M",
-      impact: p.impact ?? "", target: p.targetWindow || "", targetEnd: p.endWindow || "", dri: p.dri || "", stakeholder: p.stakeholder || "",
+      impact: p.impact ?? "", target: p.targetWindow || "", targetend: p.endWindow || "", dri: p.dri || "", stakeholder: p.stakeholder || "",
       problem: p.problem || "", solution: p.solution || "", success: p.success || "",
       deliverables: (p.deliverables || []).map((d) => (d.stretch ? "*" : "") + d.text).join(" | "),
       team: (p.roles || []).map((r) => `${r.who} :: ${r.what} :: ${r.effort || "M"}`).join(" | "),
@@ -1687,7 +1716,7 @@ function GanttGrid({ groups, org, onOpen, labelHeader = "Deliverable" }) {
 
 /* ---------- MASTER GANTT ---------- */
 function Schedule({ projects, org, unlocked, onImport, onOpen }) {
-  const [busy, setBusy] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [msg, setMsg] = useState("");
   const exportPlan = () => {
     const blob = new Blob([buildPlanToCsv(projects, org)], { type: "text/csv;charset=utf-8;" });
@@ -1701,13 +1730,6 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
     const a = document.createElement("a"); a.href = url; a.download = "revops-timeline.csv"; a.click();
     URL.revokeObjectURL(url);
   };
-  const onFile = (e) => {
-    const f = e.target.files[0]; if (!f) return;
-    const rd = new FileReader();
-    rd.onload = async () => { try { setBusy(true); setMsg(""); const n = await onImport(String(rd.result || "")); setMsg(`Imported ${n} scheduled deliverable${n === 1 ? "" : "s"}.`); } catch (err) { setMsg(err.message); } finally { setBusy(false); } };
-    rd.readAsText(f); e.target.value = "";
-  };
-
   const groups = projects.map((p) => {
     const ws = wsMeta(p.workstream); const tasks = projectTasks(p); if (!tasks.length) return null;
     return { p, ws, tasks, gMin: Math.min(...tasks.map((t) => t.idx)), gMax: Math.max(...tasks.map((t) => t.idx + t.weeks - 1)) };
@@ -1721,8 +1743,7 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
       {groups.length > 0 && <button onClick={() => { const next = {}; groups.forEach((g) => { next[g.p.id] = !allOpen; }); setExpanded(next); }} style={btnGhost}>{allOpen ? "Collapse all" : "Expand all"}</button>}
       <button onClick={exportTimeline} disabled={!groups.length} style={{ ...btnGhost, opacity: groups.length ? 1 : 0.5 }}>↓ Export timeline</button>
       <button onClick={exportPlan} disabled={!projects.length} style={btnGhost} title="Blank scaffold: one row per deliverable to fill in">↓ Export build-plan scaffold</button>
-      {unlocked && <label style={{ ...btnGhost, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>↑ Import (all projects)<input type="file" accept=".csv,text/csv" onChange={onFile} style={{ display: "none" }} /></label>}
-      {busy && <span style={{ fontSize: 12, color: T.inkSoft }}>Importing…</span>}
+      {unlocked && <button onClick={() => setShowImport(true)} style={btnGhost}>↑ Import (all projects)</button>}
       {msg && <span style={{ fontSize: 12, color: msg.startsWith("Imported") ? "#0E8A74" : "#A33D3D" }}>{msg}</span>}
     </div>
   );
@@ -1738,6 +1759,7 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {showImport && <ScheduleImportModal projects={projects} onImport={onImport} onClose={(n) => { setShowImport(false); if (typeof n === "number") setMsg(`Imported ${n} scheduled deliverable${n === 1 ? "" : "s"}.`); }} />}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
         <div><h2 style={{ ...h2Style, marginBottom: 2 }}>Timeline</h2><p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>One overall bar per project across the timeline. Click a project (its row or bar) to break it out into deliverables.</p></div>
         {controls}
@@ -1830,6 +1852,41 @@ function TimelineImportModal({ heading, deliverables, onClose, onApply }) {
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           <button onClick={apply} disabled={!parsed.tasks.length} style={{ ...btnSolid, opacity: parsed.tasks.length ? 1 : 0.5 }}>Import {parsed.tasks.length || ""} deliverable{parsed.tasks.length === 1 ? "" : "s"}</button>
           <button onClick={onClose} style={btnGhost}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- SCHEDULE IMPORT MODAL (all projects at once, paste or file — same UX as project upload) ---------- */
+function ScheduleImportModal({ projects, onClose, onImport }) {
+  const [text, setText] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const parsed = useMemo(() => csvToSchedule(text, projects), [text, projects]);
+  const nProjects = Object.keys(parsed.byProjectId || {}).length;
+  const onFile = (e) => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { setText(String(rd.result || "")); setErr(""); }; rd.readAsText(f); e.target.value = ""; };
+  const submit = async () => {
+    if (!text.trim() || parsed.error) { setErr(parsed.error || "Nothing to import."); return; }
+    try { setBusy(true); setErr(""); const n = await onImport(text); onClose(n); }
+    catch (e2) { setErr(e2.message); setBusy(false); }
+  };
+  const field = { fontFamily: T.body, fontSize: 13, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.hairline}`, background: T.surface, color: T.ink, width: "100%" };
+  const lbl = { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.08em", color: T.inkSoft, marginBottom: 5, display: "block" };
+  return (
+    <div onClick={() => onClose()} style={{ position: "fixed", inset: 0, background: "rgba(28,37,33,.32)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, width: "min(640px, 100%)", maxHeight: "88vh", overflowY: "auto", padding: 26, fontFamily: T.body }}>
+        <h2 style={{ ...h2Style, marginTop: 0 }}>Import timeline — all projects</h2>
+        <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.55, margin: "6px 0 14px" }}>Upload or paste CSV. Columns: <code style={codeChip}>projectCode, deliverable, owner, start, weeks</code> (optional <code style={codeChip}>hours</code> 10/20/40/60/80) — <code style={codeChip}>start</code> like <code style={codeChip}>Q3 2026 W2</code> (W1–W13 in a quarter), <code style={codeChip}>weeks</code> = duration. Rows are matched to projects by <code style={codeChip}>projectCode</code>; each matched project's schedule is replaced. This is the same format <strong>Export timeline</strong> produces.</p>
+        <label style={lbl}>UPLOAD .CSV</label>
+        <input type="file" accept=".csv,text/csv" onChange={onFile} style={{ fontSize: 12.5, marginBottom: 10 }} />
+        <label style={lbl}>OR PASTE CSV</label>
+        <textarea value={text} onChange={(e) => { setText(e.target.value); setErr(""); }} rows={8} placeholder={"projectCode,deliverable,owner,start,weeks\nPOP-01,Create + populate field,Business Systems,Q3 2026 W1,1"} style={{ ...field, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, resize: "vertical" }} />
+        <div style={{ fontSize: 12.5, color: parsed.error ? "#A33D3D" : T.inkSoft, margin: "8px 0 0" }}>{text.trim() ? (parsed.error || `Ready: ${parsed.count} deliverable${parsed.count === 1 ? "" : "s"} across ${nProjects} project${nProjects === 1 ? "" : "s"}.`) : "Waiting for CSV…"}</div>
+        {err && <p style={{ color: "#A33D3D", fontSize: 12.5, margin: "8px 0 0" }}>{err}</p>}
+        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+          <button onClick={submit} disabled={busy || !parsed.count} style={{ ...btnSolid, opacity: busy || !parsed.count ? 0.5 : 1 }}>{busy ? "Importing…" : `Import ${parsed.count || ""} deliverable${parsed.count === 1 ? "" : "s"}`}</button>
+          <button onClick={() => onClose()} style={btnGhost}>Cancel</button>
         </div>
       </div>
     </div>
