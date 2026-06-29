@@ -401,6 +401,9 @@ export default function App() {
     .filter((p) => wsFilter === "All" || p.workstream === wsFilter)
     .filter((p) => qFilter === "All" || projectQuarters(p).includes(qFilter))
     .slice().sort(byCategoryThenNumber);
+  // the Timeline tab shows the category (workstream) chips but not the quarter chips,
+  // so it respects only the workstream filter (full list when "All")
+  const wsVisible = wsFilter === "All" ? projects : projects.filter((p) => p.workstream === wsFilter);
   // quarters that at least one project actually spans (plus TBD when present), for the filter chips
   const targetQuarters = useMemo(() => {
     const present = new Set();
@@ -542,7 +545,7 @@ export default function App() {
             : view === "matrix" ? <Matrix projects={visible} onOpen={setSelectedId} />
               : view === "sequence" ? <Sequence projects={visible} byId={byId} onOpen={setSelectedId} />
                 : view === "resourcing" ? <Resourcing projects={projects} org={org} capacities={capacities} unlocked={unlocked} onSaveOrg={saveOrg} onOpen={setSelectedId} />
-                  : <Schedule projects={projects} org={org} unlocked={unlocked} onImport={importSchedule} onOpen={setSelectedId} />}
+                  : <Schedule projects={wsVisible} allProjects={projects} org={org} unlocked={unlocked} onImport={importSchedule} onOpen={setSelectedId} />}
       </main>
 
       {selected && <Detail p={selected} byId={byId} org={org} unlocked={unlocked} workstreams={allWorkstreams} onClose={() => setSelectedId(null)} onUpdate={(patch) => updateProject(selected.id, patch)} onRemove={() => removeProject(selected.id)} onOpen={setSelectedId} />}
@@ -1715,7 +1718,7 @@ function GanttGrid({ groups, org, onOpen, labelHeader = "Deliverable" }) {
 }
 
 /* ---------- MASTER GANTT ---------- */
-function Schedule({ projects, org, unlocked, onImport, onOpen }) {
+function Schedule({ projects, allProjects = projects, org, unlocked, onImport, onOpen }) {
   const [showImport, setShowImport] = useState(false);
   const [msg, setMsg] = useState("");
   const exportPlan = () => {
@@ -1759,7 +1762,7 @@ function Schedule({ projects, org, unlocked, onImport, onOpen }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {showImport && <ScheduleImportModal projects={projects} onImport={onImport} onClose={(n) => { setShowImport(false); if (typeof n === "number") setMsg(`Imported ${n} scheduled deliverable${n === 1 ? "" : "s"}.`); }} />}
+      {showImport && <ScheduleImportModal projects={allProjects} onImport={onImport} onClose={(n) => { setShowImport(false); if (typeof n === "number") setMsg(`Imported ${n} scheduled deliverable${n === 1 ? "" : "s"}.`); }} />}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
         <div><h2 style={{ ...h2Style, marginBottom: 2 }}>Timeline</h2><p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>One overall bar per project across the timeline. Click a project (its row or bar) to break it out into deliverables.</p></div>
         {controls}
